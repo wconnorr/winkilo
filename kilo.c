@@ -2,7 +2,7 @@
   KILO EDITOR FOR WINDOWS
 
   Based on kilo editor by antirez (https://github.com/antirez/kilo)
-  Editor features are based on kilo tutorial at: //https://viewsourcecode.org/snaptoken/kilo/01.setup/html 
+  Editor features are based on kilo tutorial at: https://viewsourcecode.org/snaptoken/kilo/
 
   TODO:
     - autoindentaton
@@ -239,21 +239,6 @@ void editorUpdateSyntax(erow *row) {
   row->hl_open_comment = in_comment;
   if (changed && row->idx + 1 < E.numrows)
     editorUpdateSyntax(&E.row[row->idx + 1]);
-}
-
-// Takes highlight enum and returns the corresponding ANSI color code value
-// See tables in https://gist.github.com/JBlond/2fea43a3049b38287e5e9cefc87b2124
-int editorSyntaxToColor(int hl) {
-  switch (hl) {
-    case HL_COMMENT:
-    case HL_MLCOMMENT: return CYAN;
-    case HL_KEYWORD1: return HI_YELLOW;
-    case HL_KEYWORD2: return GREEN;
-    case HL_STRING: return HI_PURPLE;
-    case HL_NUMBER: return RED;
-    case HL_MATCH: return HI_BLUE;
-    default: return WHITE;
-  }
 }
 
 void editorSelectSyntaxHighlight() {

@@ -123,8 +123,36 @@ struct abuf {
   int len;
 };
 
-/*** FILETYPES ***/
+/*** FUNCTION PROTOTYPES ***/
 
+void clearScreen();
+int editorReadKey();
+void editorSetStatusMessage(const char *fmt, ...);
+void editorRefreshScreen();
+char *editorPrompt(char *prompt, void (*callback)(char *, int));
+
+/*** CUSTOMIZATION ***/
+
+/* FULL FUNCTIONS */
+// I know this isn't the "correct" way to use a .h file, but putting this her
+//  allows for easier customization, rather than searching through the .c file
+
+// Takes highlight enum and returns the corresponding ANSI color code value
+// See tables in https://gist.github.com/JBlond/2fea43a3049b38287e5e9cefc87b2124
+int editorSyntaxToColor(int hl) {
+  switch (hl) {
+    case HL_COMMENT:
+    case HL_MLCOMMENT: return CYAN;
+    case HL_KEYWORD1: return HI_YELLOW;
+    case HL_KEYWORD2: return GREEN;
+    case HL_STRING: return HI_PURPLE;
+    case HL_NUMBER: return RED;
+    case HL_MATCH: return HI_BLUE;
+    default: return WHITE;
+  }
+}
+
+/* FILETYPE HIGHTLIGHTING */
 char *C_HL_extensions[] = {".c", ".h", ".cpp", ".hpp", ".cc", NULL};
 // KEYWORD2 words end in |
 // For c: kw1 are general keywords, kw2 are types
@@ -150,11 +178,3 @@ struct editorSyntax HLDB[] = {
 };
 
 #define HLDB_ENTRIES (sizeof(HLDB) / sizeof(HLDB[0]))
-
-/*** FUNCTION PROTOTYPES ***/
-
-void clearScreen();
-int editorReadKey();
-void editorSetStatusMessage(const char *fmt, ...);
-void editorRefreshScreen();
-char *editorPrompt(char *prompt, void (*callback)(char *, int));
