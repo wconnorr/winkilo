@@ -61,17 +61,6 @@ enum editorKey {
   PAGE_DOWN
 };
 
-enum editorHighlight {
-  HL_NORMAL = 0,
-  HL_COMMENT,
-  HL_MLCOMMENT,
-  HL_KEYWORD1,
-  HL_KEYWORD2,
-  HL_STRING,
-  HL_NUMBER,
-  HL_MATCH
-};
-
 /*** DATA ***/
 
 struct editorSyntax {
@@ -123,47 +112,32 @@ struct abuf {
   int len;
 };
 
-/*** FUNCTION PROTOTYPES ***/
-
-void clearScreen();
-int editorReadKey();
-void editorSetStatusMessage(const char *fmt, ...);
-void editorRefreshScreen();
-char *editorPrompt(char *prompt, void (*callback)(char *, int));
-
 /*** CUSTOMIZATION ***/
 
-/* FULL FUNCTIONS */
-// I know this isn't the "correct" way to use a .h file, but putting this her
-//  allows for easier customization, rather than searching through the .c file
+// Matches highlight cases w/ color code
+enum editorHighlight {
+  HL_NORMAL = WHITE,
+  HL_COMMENT = CYAN,
+  HL_MLCOMMENT = CYAN,
+  HL_KEYWORD1 = HI_YELLOW,
+  HL_KEYWORD2 = HI_GREEN,
+  HL_STRING = HI_PURPLE,
+  HL_NUMBER = RED,
+  HL_MATCH = HI_BLUE
+};
 
-// Takes highlight enum and returns the corresponding ANSI color code value
-// See tables in https://gist.github.com/JBlond/2fea43a3049b38287e5e9cefc87b2124
-int editorSyntaxToColor(int hl) {
-  switch (hl) {
-    case HL_COMMENT:
-    case HL_MLCOMMENT: return CYAN;
-    case HL_KEYWORD1: return HI_YELLOW;
-    case HL_KEYWORD2: return GREEN;
-    case HL_STRING: return HI_PURPLE;
-    case HL_NUMBER: return RED;
-    case HL_MATCH: return HI_BLUE;
-    default: return WHITE;
-  }
-}
-
-/* FILETYPE HIGHTLIGHTING */
+/* Highlight language database */
 char *C_HL_extensions[] = {".c", ".h", ".cpp", ".hpp", ".cc", NULL};
 // KEYWORD2 words end in |
 // For c: kw1 are general keywords, kw2 are types
 char *C_HL_keywords[] = {
-  "auto","break","case","continue","default","do","else","enum",
+  "auto","break","case","continue","default","do","else",
   "extern","for","goto","if","register","return","sizeof","static",
-  "struct","switch","typedef","union","volatile","while","NULL",
+  "switch","typedef","union","volatile","while","NULL",
   "#define", "#include",
 
   "int|", "long|", "double|", "float|", "char|", "unsigned|", "signed|",
-  "void|", NULL
+  "void|", "const|", "enum|", "struct|", NULL
 };
 
 // Highlight database
@@ -178,3 +152,63 @@ struct editorSyntax HLDB[] = {
 };
 
 #define HLDB_ENTRIES (sizeof(HLDB) / sizeof(HLDB[0]))
+
+/*** FUNCTION PROTOTYPES ***/
+
+// Error handling
+void die(const char *s);
+
+/*** TERMINAL STATE ***/
+void disableRawMode();
+void enableRawMode();
+int getCursorPosition(int *rows, int *cols);
+int getWindowSize(int *rows, int *cols);
+
+/*** SYNTAX HIGHLIGHTING ***/
+int is_separator(int c);
+void editorUpdateSyntax(erow *row);
+void editorSelectSyntaxHighlight();
+
+/*** ROW OPERATIONS ***/
+int editorRowCxToRx(erow *row, int cx);
+int editorRowRxToCx(erow *row, int rx);
+void editorUpdateRow(erow *row);
+void editorInsertRow(int at, char *s, size_t len);
+void editorFreeRow(erow *row);
+void editorRowInsertChar(erow *row, int at, int c);
+void editorRowAppendString(erow *row, char *s, size_t len);
+void editorRowDelChar(erow *row, int at);
+
+/*** EDITOR OPERATIONS ***/
+void editorInsertChar(int c);
+void editorInsertNewline();
+void editorDelChar();
+
+/*** FILE IO ***/
+char *editorRowsToString(int *buflen);
+void editorOpen(char *filename);
+void editorSave();
+
+/*** FIND ***/
+void editorFindCallback(char *query, int key);
+void editorFind();
+
+/*** APPEND BUFFER ***/
+void abAppend(struct abuf *ab, const char *s, int len);
+char *editorPrompt(char *prompt, void (*callback)(char *, int));
+void editorMoveCursor(int key);
+int editorReadBytes(HANDLE handle, char *pc, int max_bytes);
+int editorReadKey();
+void editorProcessKeypress();
+
+/*** OUTPUT ***/
+void editorScroll();
+void clearScreen();
+void editorDrawRows(struct abuf *ab);
+void editorDrawStatusBar(struct abuf *ab);
+void editorDrawMessageBar(struct abuf *ab);
+void editorRefreshScreen();
+void editorSetStatusMessage(const char *fmt, ...);
+
+/*** INIT ***/
+void initEditor();

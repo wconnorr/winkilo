@@ -18,7 +18,7 @@ In addition, it may be necessary to enable virtual terminal (VT) commands in the
 
 Kilo was designed to be lightweight and easy to customize. I haven't added customization in the application itself, but minor modifications to the `/*** CUSTOMIZATION ***/` section of the `.h` file.
 
-Editing the `editorSyntaxToColor` with the provided color code enumerations will allow for different colored syntax highlighting. This may be necessary on different consoles to better contrast the highlights.
+Editing the `editorHighlight` enum with the provided color code enumerations will allow for different colored syntax highlighting. This may be necessary on different consoles to better contrast the highlights.
 
 New filetypes can be added to the highlight database `HLDB` by mimicking the setup for the provided c highlighting. Each HLDB entry consists of (in order): 
 1. the file type display name

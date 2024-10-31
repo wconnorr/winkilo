@@ -887,7 +887,7 @@ void editorDrawRows(struct abuf *ab) {
       char *c = &E.row[filerow].render[E.coloff]; 
       // Syntax highlighting
       unsigned char *hl = &E.row[filerow].hl[E.coloff];
-      int current_color = -1;
+      char current_color = -1;
       for (int j = 0; j < len; j++) {
         if (iscntrl(c[j])) {
           // Draw control characters as printables w/ inverted colors
@@ -908,7 +908,7 @@ void editorDrawRows(struct abuf *ab) {
           }
           abAppend(ab, &c[j], 1);
         } else {
-          int color = editorSyntaxToColor(hl[j]);
+          char color = hl[j];
           if (color != current_color) {
             current_color = color;
             char buf[16];
