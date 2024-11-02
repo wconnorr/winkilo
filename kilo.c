@@ -5,11 +5,14 @@
   Editor features are based on kilo tutorial at: https://viewsourcecode.org/snaptoken/kilo/
 
   TODO:
-    - autoindentaton
-    - undo/redo
-    - cut/copy/paste (requires mouse input for selection)
+    - options (CTRL-O)- tabs-to-spaces, tab stop interval
+    - undo/redo (CTRL-Z/Y; maybe CTRL-SHIFT-Z as well if I can figure out the inputs)
+      - maybe have just a short undo-redo buffer: undo changes to last edited line?
+    - cut/copy/paste (CTRL-X/C/V) (requires mouse input for selection)
     - auto-resize for window
-    - jump to line
+    - jump to line (CTRL_J)
+    - save-as
+    - diff-checker to last saved version of file (at least showing lines added/removed/changed)
 */
 
 /*** INCLUDES ***/
@@ -386,6 +389,42 @@ void editorRowDelChar(erow *row, int at) {
 
 /*** EDITOR OPERATIONS ***/
 
+// Replaces spacing (' ', '\t') of row_dst with that of row_src, returns number of space+tab chars
+int editorMatchSpaces(erow *row_src, erow *row_dst) {
+  // count spaces and tabs in src
+  int num_space_chars; // #' ' + #'\t'
+  for (num_space_chars=0; num_space_chars < row_src->size && (row_src->chars[num_space_chars]==' ' || row_src->chars[num_space_chars]=='\t'); num_space_chars++);
+  // if (num_space_chars == row_src->size && num_space_chars != 0) num_space_chars--;
+  // count spaces and tabs in dst
+  int num_space_chars_dst; // #' ' + #'\t'
+  for (num_space_chars_dst=0; num_space_chars_dst < row_dst->size && (row_dst->chars[num_space_chars_dst]==' ' || row_dst->chars[num_space_chars_dst]=='\t'); num_space_chars_dst++);
+  // if (num_space_chars_dst == row_dst->size && num_space_chars_dst != 0) num_space_chars_dst--;
+
+  // create new dst such that it contains the spacing of row and the rest of dst
+
+  // This handles the new row being bigger or smaller than the old one
+  int new_row_size = row_dst->size - num_space_chars_dst + num_space_chars;
+  char *new_dst_row = malloc(new_row_size);
+  if (row_dst->size != num_space_chars_dst)
+    memcpy(&new_dst_row[num_space_chars], &row_dst->chars[num_space_chars_dst], row_dst->size-num_space_chars_dst);
+  if (num_space_chars)
+    memcpy(new_dst_row, row_src->chars, num_space_chars);
+  row_dst->size = new_row_size;
+  free(row_dst->chars);
+  row_dst->chars = new_dst_row;
+
+  return num_space_chars;
+
+  // count up number of spaces rendered to offset cursor
+  // dst hasn't been updated, but it should mimic src
+  // int num_rendered_spaces;
+  // for (num_rendered_spaces=0; num_rendered_spaces < row_src->rsize && row_src->render[num_rendered_spaces]==' '; num_rendered_spaces++);
+  // char buf[64];
+  // sprintf(buf, "nrs=%d", num_rendered_spaces);
+  // editorPrompt(buf, NULL);
+  // return num_rendered_spaces;
+}
+
 // Inserts character at cursors. If on line past EOF, it creates a new row.
 void editorInsertChar(int c) {
   if (E.cy == E.numrows) {
@@ -407,8 +446,10 @@ void editorInsertNewline() {
     row->chars[row->size] = '\0';
     editorUpdateRow(row);
   }
+  int spaces = editorMatchSpaces(&E.row[E.cy], &E.row[E.cy+1]);
+  editorUpdateRow(&E.row[E.cy+1]);
   E.cy++;
-  E.cx = 0;
+  E.cx = spaces;
 }
 
 // Deletes character less of cursor (backspace)
