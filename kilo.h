@@ -9,7 +9,7 @@
 
 /*** DEFINES ***/
 
-#define KILO_VERSION "WINKILO:1.0.0"
+#define KILO_VERSION "WINKILO:1.0.1"
 #define KILO_TAB_STOP 8
 #define KILO_QUIT_TIMES 3
 
@@ -180,6 +180,7 @@ void editorRowAppendString(erow *row, char *s, size_t len);
 void editorRowDelChar(erow *row, int at);
 
 /*** EDITOR OPERATIONS ***/
+int editorMatchSpaces(erow *row_src, erow *row_dst);
 void editorInsertChar(int c);
 void editorInsertNewline();
 void editorDelChar();
@@ -192,10 +193,12 @@ void editorSave();
 /*** FIND ***/
 void editorFindCallback(char *query, int key);
 void editorFind();
+void editorJumpCallback(char *query, int key);
+void editorJump();
 
 /*** APPEND BUFFER ***/
 void abAppend(struct abuf *ab, const char *s, int len);
-char *editorPrompt(char *prompt, void (*callback)(char *, int));
+char *editorPrompt(char *prompt, int numeric, void (*callback)(char *, int));
 void editorMoveCursor(int key);
 int editorReadBytes(HANDLE handle, char *pc, int max_bytes);
 int editorReadKey();

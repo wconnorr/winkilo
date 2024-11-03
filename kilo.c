@@ -10,7 +10,6 @@
       - maybe have just a short undo-redo buffer: undo changes to last edited line?
     - cut/copy/paste (CTRL-X/C/V) (requires mouse input for selection)
     - auto-resize for window
-    - jump to line (CTRL_J)
     - save-as
     - diff-checker to last saved version of file (at least showing lines added/removed/changed)
 */
@@ -414,15 +413,6 @@ int editorMatchSpaces(erow *row_src, erow *row_dst) {
   row_dst->chars = new_dst_row;
 
   return num_space_chars;
-
-  // count up number of spaces rendered to offset cursor
-  // dst hasn't been updated, but it should mimic src
-  // int num_rendered_spaces;
-  // for (num_rendered_spaces=0; num_rendered_spaces < row_src->rsize && row_src->render[num_rendered_spaces]==' '; num_rendered_spaces++);
-  // char buf[64];
-  // sprintf(buf, "nrs=%d", num_rendered_spaces);
-  // editorPrompt(buf, NULL);
-  // return num_rendered_spaces;
 }
 
 // Inserts character at cursors. If on line past EOF, it creates a new row.
@@ -512,7 +502,7 @@ void editorOpen(char *filename) {
 
 void editorSave() {
   if (E.filename == NULL) {
-    E.filename = editorPrompt("Save as: %s (ESC to cancel)", NULL);
+    E.filename = editorPrompt("Save as: %s (ESC to cancel)", 0, NULL);
     if (E.filename == NULL) {
       editorSetStatusMessage("Save aborted");
       return;
@@ -608,8 +598,40 @@ void editorFind() {
   int saved_coloff = E.coloff;
   int saved_rowoff = E.rowoff;
 
-  char *query = editorPrompt("Search: %s (Use ESC/Arrows/Enter)", editorFindCallback);
+  char *query = editorPrompt("Search: %s (Use ESC/Arrows/Enter)", 0, editorFindCallback);
 
+  if (query) {
+    free(query);
+  } else {
+    E.cx = saved_cx;
+    E.cy = saved_cy;
+    E.coloff = saved_coloff;
+    E.rowoff = saved_rowoff;
+  }
+}
+
+// Jumps to line number at each press
+void editorJumpCallback(char *query, int key) {
+  if (key == '\r' || key == ESC)
+    return;
+
+  E.cy = atoi(query)-1;
+  E.cy = E.cy < 0 ? 0 : E.cy;
+  E.cy = E.cy > E.numrows ? E.numrows : E.cy;
+  E.cx = 0;
+  E.rowoff = E.numrows;
+
+  }
+
+// Jumps to line number
+void editorJump() {
+  int saved_cx = E.cx;
+  int saved_cy = E.cy;
+  int saved_coloff = E.coloff;
+  int saved_rowoff = E.rowoff;
+
+  char *query = editorPrompt("Jump to line: #%s", 1, editorJumpCallback);
+  
   if (query) {
     free(query);
   } else {
@@ -640,7 +662,7 @@ void abFree(struct abuf *ab) {
 /*** INPUT ***/
 
 // Opens prompt and handles text input: if callback is not NULL, performs at each keypress
-char *editorPrompt(char *prompt, void (*callback)(char *, int)) {
+char *editorPrompt(char *prompt, int numeric, void (*callback)(char *, int)) {
   size_t bufsize = 128;
   char *buf = malloc(bufsize);
 
@@ -668,6 +690,8 @@ char *editorPrompt(char *prompt, void (*callback)(char *, int)) {
         return buf;
       }
     } else if (!iscntrl(c) && c < 128) { // non-control 'char' character
+      if(numeric && (c < '0' || c > '9'))
+        continue;
       if (buflen == bufsize-1) {
         // Increase buffer size as needed
         bufsize *= 2;
@@ -829,6 +853,10 @@ void editorProcessKeypress() {
 
     case CTRL_KEY('f'):
       editorFind();
+      break;
+
+    case CTRL_KEY('j'):
+      editorJump();
       break;
 
     case BACKSPACE:
@@ -1064,7 +1092,7 @@ int main(int argc, char *argv[]) {
   if (argc >= 2)
     editorOpen(argv[1]);
 
-  editorSetStatusMessage("HELP: Ctrl-S = save | Ctrl-Q = quit | Ctrl-F = find");
+  editorSetStatusMessage("HELP: Ctrl-S = save | Ctrl-Q = quit | Ctrl-F = find | Ctrl-J = jump");
 
   while (1) {
     FlushConsoleInputBuffer(E.in_handle);
