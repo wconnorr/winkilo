@@ -5,11 +5,12 @@
   Editor features are based on kilo tutorial at: https://viewsourcecode.org/snaptoken/kilo/
 
   TODO:
-    - options (CTRL-O)- tabs-to-spaces, tab stop interval
+    - options (CTRL-O) - tabs-to-spaces, tab stop interval
     - undo/redo (CTRL-Z/Y; maybe CTRL-SHIFT-Z as well if I can figure out the inputs)
       - maybe have just a short undo-redo buffer: undo changes to last edited line?
     - cut/copy/paste (CTRL-X/C/V) (requires mouse input for selection)
     - auto-resize for window
+    - scroll
     - save-as
     - diff-checker to last saved version of file (at least showing lines added/removed/changed)
 */
@@ -743,6 +744,7 @@ void editorMoveCursor(int key) {
     E.cx = rowlen;
 }
 
+// DEPRECIATED: use editorReadEvents instead
 // Reads a single keypress (up to max_bytes) with 0.1 second timeout
 // Returns num bytes read, 0 on timeout
 // If read or wait fails, dies
@@ -762,13 +764,59 @@ int editorReadBytes(HANDLE handle, char *pc, int max_bytes) {
   }
 }
 
+// TODO: Figure out how to get multibyte escape codes!!!
+// TODO: Fix how its processing the arrow keys!
+int editorReadEvents(HANDLE handle, char *pc, int n_records) {
+  DWORD wait_ret = WaitForSingleObject(handle, 100);
+  if (wait_ret == WAIT_TIMEOUT)
+    return 0; // timeout
+  else if (wait_ret == WAIT_OBJECT_0) {
+    INPUT_RECORD *record_arr = malloc(sizeof(INPUT_RECORD)*n_records);
+    // records are in buffer
+    long unsigned int nread;
+    if(!ReadConsoleInput(E.in_handle, record_arr, n_records, &nread) || nread < 1)
+      die("read"); // read failed
+    
+    int retval = nread;
+    for (int i = 0; i < nread; i++) {
+      switch(record_arr[i].EventType) {
+        case KEY_EVENT:
+          if (!record_arr[i].Event.KeyEvent.bKeyDown) {
+            retval = 0; // we ignore key release events!
+            break;
+          }
+          pc[i] = record_arr[i].Event.KeyEvent.uChar.AsciiChar;
+          if (pc[i] == 0)
+            retval = 0;
+          break;
+        case MOUSE_EVENT:
+        // TODO: Process mouse movements/button presses
+        case WINDOW_BUFFER_SIZE_EVENT:
+          // TODO: Do we need to redraw screen in response?
+          // E.screencols = record_arr[i].Event.WindowBufferSizeEvent.dwSize.Y-2;
+          // E.screenrows = record_arr[i].Event.WindowBufferSizeEvent.dwSize.X;
+          // TODO: Adjust window to cursor!
+          pc[i] = -1; // TODO: handle!
+          retval =  0;
+      }
+    }
+    free(record_arr);
+
+    return retval;
+  } else {
+    // wait failed
+    die("WaitForSingleObject (reading bytes)");
+  }
+}
+
 // Blocks until a single keypress is read in
 // Returns an int because escape sequences will be mapped to a single value rather than multiple chars
 int editorReadKey() {
   int nread;
   char buf[4];
 
-  while((nread = editorReadBytes(E.in_handle, buf, 4)) == 0); // read until non-timeout event
+  // TODO: deal with other events, maybe move this outside the function
+  while((nread = editorReadEvents(E.in_handle, buf, 4)) == 0); // read until non-timeout event
 
   // char errorMessage[64];
   // sprintf(errorMessage, "read returned %d bytes", nread);

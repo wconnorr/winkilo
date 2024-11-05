@@ -201,6 +201,7 @@ void abAppend(struct abuf *ab, const char *s, int len);
 char *editorPrompt(char *prompt, int numeric, void (*callback)(char *, int));
 void editorMoveCursor(int key);
 int editorReadBytes(HANDLE handle, char *pc, int max_bytes);
+int editorReadEvents(HANDLE handle, char *pc, int n_records);
 int editorReadKey();
 void editorProcessKeypress();
 
