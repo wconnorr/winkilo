@@ -87,11 +87,11 @@ typedef struct erow {
 struct editorConfig {
   int cx, cy; // cursor coordinates into erow.chars
   int rx;    // cursor x into erow.render: same as cx when no tabs, else rx > cx
-  int rowoff;
+  int rowoff;  // index of top-drawn row
   int coloff;
-  int screenrows;
+  int screenrows; // number of rows available to draw on in console
   int screencols;
-  int numrows;
+  int numrows; // len of `row` array
   erow *row;
   int dirty; // flag for whether file has been modified since last open/save
   char *filename;
@@ -104,6 +104,7 @@ struct editorConfig {
   // terminal reset state
   DWORD og_terminal_in_state;
   DWORD og_terminal_out_state;
+  // COORD og_terminal_size;
 };
 
 // abuf is just an appendable string with an easy-to-access len (instead of reading until 0)
@@ -200,7 +201,6 @@ void editorJump();
 void abAppend(struct abuf *ab, const char *s, int len);
 char *editorPrompt(char *prompt, int numeric, void (*callback)(char *, int));
 void editorMoveCursor(int key);
-int editorReadBytes(HANDLE handle, char *pc, int max_bytes);
 int editorReadEvents(HANDLE handle, char *pc, int n_records);
 int editorReadKey();
 void editorProcessKeypress();

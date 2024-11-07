@@ -75,7 +75,7 @@ void enableRawMode() {
   terminal_in_state |= ENABLE_VIRTUAL_TERMINAL_INPUT |
   // Allow mouse selection (for copy command, TODO: mouse inputs are currently ignored)
                        ENABLE_MOUSE_INPUT | ENABLE_QUICK_EDIT_MODE |
-  // Report window resizes (TODO: currently unused)
+  // Report window resizes
                        ENABLE_WINDOW_INPUT;
 
   if (!SetConsoleMode(E.in_handle, terminal_in_state))
@@ -91,6 +91,38 @@ void enableRawMode() {
   if (!SetConsoleMode(E.out_handle, terminal_out_state))
     die("SetConsoleMode");      
 }
+
+void restoreScrolling() {
+  // if(!SetConsoleScreenBufferSize(E.out_handle, E.og_terminal_size))
+    // die("SetConsoleScreenBufferSize");
+}
+
+// TODO: SetConsoleScreenBufferSize is depreciated!!!
+void disableScrolling() {
+  // char changeSize[16];
+  // int nchars = sprintf(changeSize, "\x1b[0;0r");
+  // if (write(STDOUT_FILENO, changeSize, nchars) != nchars) 
+  //   die("DisableScrolling");
+}
+//   CONSOLE_SCREEN_BUFFER_INFO screenInfo;
+//   GetConsoleScreenBufferInfo(E.out_handle, &screenInfo);
+
+//   short winWidth  = screenInfo.srWindow.Right - screenInfo.srWindow.Left + 1;
+//   short winHeight = screenInfo.srWindow.Bottom - screenInfo.srWindow.Top + 1;
+
+//   E.og_terminal_size = screenInfo.dwSize;
+//   atexit(restoreScrolling);
+//   short bufWidth  = screenInfo.dwSize.X;
+//   short bufHeight = screenInfo.dwSize.Y;
+
+//   COORD newSize;
+//   newSize.X = bufWidth;
+//   newSize.Y = winHeight; // set buffer height to window height to remove scrollbar
+
+
+//   if (!SetConsoleScreenBufferSize(E.out_handle, newSize))
+//     die("SetConsoleScreenBufferSize");
+// }
 
 int getCursorPosition(int *rows, int *cols) {
   char buf[32];
@@ -111,11 +143,20 @@ int getCursorPosition(int *rows, int *cols) {
   return 0;
 }
 
-// Returns terminal window dimensions; reading cursor position in bottom-right corner.
+// Gets terminal window dimensions and sets to rows and cols params
+// Returns bool: 0 if failure, else non-zero
 int getWindowSize(int *rows, int *cols) {
-  // TODO: Try to get the information the "correct" way
-  if (write(STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12) return -1; // send cursor to bottom right of screen
-    return getCursorPosition(rows, cols);
+  // First try the real way: query system
+  CONSOLE_SCREEN_BUFFER_INFO screenInfo;
+  if(GetConsoleScreenBufferInfo(E.out_handle, &screenInfo)) {
+    *cols = screenInfo.srWindow.Right - screenInfo.srWindow.Left + 1;
+    *rows = screenInfo.srWindow.Bottom - screenInfo.srWindow.Top + 1;
+    return 1;
+  } else {
+    // Put the cursor to the bottom right and query the VT
+    if (write(STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12) return 0;
+      return (getCursorPosition(rows, cols) != -1);
+  }
 }
 
 /*** SYNTAX HIGHLIGHTING ***/
@@ -744,28 +785,7 @@ void editorMoveCursor(int key) {
     E.cx = rowlen;
 }
 
-// DEPRECIATED: use editorReadEvents instead
-// Reads a single keypress (up to max_bytes) with 0.1 second timeout
-// Returns num bytes read, 0 on timeout
-// If read or wait fails, dies
-int editorReadBytes(HANDLE handle, char *pc, int max_bytes) {
-  DWORD wait_ret = WaitForSingleObject(handle, 100);
-  if (wait_ret == WAIT_TIMEOUT)
-    return 0; // timeout
-  else if (wait_ret == WAIT_OBJECT_0) {
-    // char to read is in buffer
-    long unsigned int nread;
-    if(!ReadConsole(E.in_handle, pc, max_bytes, &nread, NULL) || nread < 1)
-      die("read"); // read failed
-    return (int)nread;
-  } else {
-    // wait failed
-    die("WaitForSingleObject (reading bytes)");
-  }
-}
-
-// TODO: Figure out how to get multibyte escape codes!!!
-// TODO: Fix how its processing the arrow keys!
+// TODO: REFACTOR!!!!
 int editorReadEvents(HANDLE handle, char *pc, int n_records) {
   DWORD wait_ret = WaitForSingleObject(handle, 100);
   if (wait_ret == WAIT_TIMEOUT)
@@ -792,10 +812,10 @@ int editorReadEvents(HANDLE handle, char *pc, int n_records) {
         case MOUSE_EVENT:
         // TODO: Process mouse movements/button presses
         case WINDOW_BUFFER_SIZE_EVENT:
-          // TODO: Do we need to redraw screen in response?
-          // E.screencols = record_arr[i].Event.WindowBufferSizeEvent.dwSize.Y-2;
-          // E.screenrows = record_arr[i].Event.WindowBufferSizeEvent.dwSize.X;
-          // TODO: Adjust window to cursor!
+          // Ignore event data, get window size (event includes scroll buffer)
+          if(!getWindowSize(&E.screenrows, &E.screencols)) die("getWindowSize");
+          E.screenrows -= 2; // 2 info rows at bottom
+          editorRefreshScreen();
           pc[i] = -1; // TODO: handle!
           retval =  0;
       }
@@ -865,8 +885,8 @@ int editorReadKey() {
   return c;
 }
 
-// Gets keypress and performs corresponding action
-void editorProcessKeypress() {
+// Gets keypress or other event and performs corresponding action
+void editorProcessEvent() {
   static int quit_times = KILO_QUIT_TIMES;
 
   int c = editorReadKey();
@@ -1128,7 +1148,7 @@ void initEditor() {
   E.statusmsg_time = 0;
   E.syntax = NULL;
 
-  if (getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
+  if (!getWindowSize(&E.screenrows, &E.screencols)) die("getWindowSize");
   E.screenrows -= 2; // Make room for status bar and message prompts
 }
 
@@ -1137,6 +1157,8 @@ int main(int argc, char *argv[]) {
   E.out_handle = GetStdHandle(STD_OUTPUT_HANDLE);
   enableRawMode();
   initEditor();
+  // TODO: Not implemented yet!
+  disableScrolling();
   if (argc >= 2)
     editorOpen(argv[1]);
 
@@ -1145,7 +1167,7 @@ int main(int argc, char *argv[]) {
   while (1) {
     FlushConsoleInputBuffer(E.in_handle);
     editorRefreshScreen();
-    editorProcessKeypress();
+    editorProcessEvent();
   }
   return 0;
 }
