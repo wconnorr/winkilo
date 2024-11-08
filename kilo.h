@@ -104,7 +104,7 @@ struct editorConfig {
   // terminal reset state
   DWORD og_terminal_in_state;
   DWORD og_terminal_out_state;
-  // COORD og_terminal_size;
+  COORD og_terminal_size;
 };
 
 // abuf is just an appendable string with an easy-to-access len (instead of reading until 0)
@@ -164,6 +164,8 @@ void disableRawMode();
 void enableRawMode();
 int getCursorPosition(int *rows, int *cols);
 int getWindowSize(int *rows, int *cols);
+void matchScreenBufferToWindow();
+void restoreOriginalScreenBufferSize();
 
 /*** SYNTAX HIGHLIGHTING ***/
 int is_separator(int c);

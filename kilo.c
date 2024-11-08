@@ -9,8 +9,8 @@
     - undo/redo (CTRL-Z/Y; maybe CTRL-SHIFT-Z as well if I can figure out the inputs)
       - maybe have just a short undo-redo buffer: undo changes to last edited line?
     - cut/copy/paste (CTRL-X/C/V) (requires mouse input for selection)
-    - auto-resize for window
-    - scroll
+    - auto-resize for window -> crashes using windowsAPI
+    - scroll -> maybe set scroll area w/ codes and write whole file to screen buffer?
     - save-as
     - diff-checker to last saved version of file (at least showing lines added/removed/changed)
 */
@@ -40,6 +40,10 @@ struct editorConfig E;
 // Error handling; prints error info and message and kills program
 void die(const char *s) {
   clearScreen();
+  DWORD error = GetLastError();
+  char buf[128];
+  FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM, NULL, error, 0, buf, 128, NULL);
+  printf("ERROR %d: %s\n", error, buf);
   perror(s);
   exit(1);
 }
@@ -69,12 +73,13 @@ void enableRawMode() {
   // Allow all inputs to be read by application instead of echoing or preprocessing
   // Note: some of these are on/off by default: we are being explicit with all options
   // DISABLE:
-  terminal_in_state &= ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT | ENABLE_INSERT_MODE );
+  terminal_in_state &= ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT |
+                         ENABLE_INSERT_MODE | ENABLE_QUICK_EDIT_MODE);
   // ENABLE:
   // Enable VT commands
   terminal_in_state |= ENABLE_VIRTUAL_TERMINAL_INPUT |
   // Allow mouse selection (for copy command, TODO: mouse inputs are currently ignored)
-                       ENABLE_MOUSE_INPUT | ENABLE_QUICK_EDIT_MODE |
+                       ENABLE_MOUSE_INPUT |
   // Report window resizes
                        ENABLE_WINDOW_INPUT;
 
@@ -91,38 +96,6 @@ void enableRawMode() {
   if (!SetConsoleMode(E.out_handle, terminal_out_state))
     die("SetConsoleMode");      
 }
-
-void restoreScrolling() {
-  // if(!SetConsoleScreenBufferSize(E.out_handle, E.og_terminal_size))
-    // die("SetConsoleScreenBufferSize");
-}
-
-// TODO: SetConsoleScreenBufferSize is depreciated!!!
-void disableScrolling() {
-  // char changeSize[16];
-  // int nchars = sprintf(changeSize, "\x1b[0;0r");
-  // if (write(STDOUT_FILENO, changeSize, nchars) != nchars) 
-  //   die("DisableScrolling");
-}
-//   CONSOLE_SCREEN_BUFFER_INFO screenInfo;
-//   GetConsoleScreenBufferInfo(E.out_handle, &screenInfo);
-
-//   short winWidth  = screenInfo.srWindow.Right - screenInfo.srWindow.Left + 1;
-//   short winHeight = screenInfo.srWindow.Bottom - screenInfo.srWindow.Top + 1;
-
-//   E.og_terminal_size = screenInfo.dwSize;
-//   atexit(restoreScrolling);
-//   short bufWidth  = screenInfo.dwSize.X;
-//   short bufHeight = screenInfo.dwSize.Y;
-
-//   COORD newSize;
-//   newSize.X = bufWidth;
-//   newSize.Y = winHeight; // set buffer height to window height to remove scrollbar
-
-
-//   if (!SetConsoleScreenBufferSize(E.out_handle, newSize))
-//     die("SetConsoleScreenBufferSize");
-// }
 
 int getCursorPosition(int *rows, int *cols) {
   char buf[32];
@@ -158,6 +131,8 @@ int getWindowSize(int *rows, int *cols) {
       return (getCursorPosition(rows, cols) != -1);
   }
 }
+
+
 
 /*** SYNTAX HIGHLIGHTING ***/
 
@@ -785,8 +760,8 @@ void editorMoveCursor(int key) {
     E.cx = rowlen;
 }
 
-// TODO: REFACTOR!!!!
 int editorReadEvents(HANDLE handle, char *pc, int n_records) {
+  static DWORD prev_mouse_button_state = 0;
   DWORD wait_ret = WaitForSingleObject(handle, 100);
   if (wait_ret == WAIT_TIMEOUT)
     return 0; // timeout
@@ -798,6 +773,7 @@ int editorReadEvents(HANDLE handle, char *pc, int n_records) {
       die("read"); // read failed
     
     int retval = nread;
+    DWORD curr_mouse_button_state = 0;
     for (int i = 0; i < nread; i++) {
       switch(record_arr[i].EventType) {
         case KEY_EVENT:
@@ -810,14 +786,33 @@ int editorReadEvents(HANDLE handle, char *pc, int n_records) {
             retval = 0;
           break;
         case MOUSE_EVENT:
-        // TODO: Process mouse movements/button presses
+          curr_mouse_button_state = record_arr[i].Event.MouseEvent.dwButtonState;
+          // get clicks, holds, and releases
+          // DWORD mouse_presses  = ~prev_mouse_button_state &  curr_mouse_button_state;
+          // DWORD mouse_holds    =  prev_mouse_button_state &  curr_mouse_button_state;
+          // DWORD mouse_releases =  prev_mouse_button_state & ~curr_mouse_button_state;
+          // Move cursor to mouse whenever button is down
+          if (curr_mouse_button_state & FROM_LEFT_1ST_BUTTON_PRESSED) {
+            E.cy = record_arr[i].Event.MouseEvent.dwMousePosition.Y + E.rowoff;
+            E.rx = record_arr[i].Event.MouseEvent.dwMousePosition.X + E.coloff;
+            E.cx = editorRowRxToCx(&E.row[E.cy], E.rx);
+          }
+          // TODO: Drag for selection
+
+          prev_mouse_button_state = curr_mouse_button_state;
+          editorRefreshScreen();
+          retval = 0;
+          break;
         case WINDOW_BUFFER_SIZE_EVENT:
           // Ignore event data, get window size (event includes scroll buffer)
           if(!getWindowSize(&E.screenrows, &E.screencols)) die("getWindowSize");
           E.screenrows -= 2; // 2 info rows at bottom
+          if (E.screenrows < 0) E.screenrows = 2;
           editorRefreshScreen();
-          pc[i] = -1; // TODO: handle!
           retval =  0;
+          break;
+        default:
+          retval = 0;
       }
     }
     free(record_arr);
@@ -837,10 +832,6 @@ int editorReadKey() {
 
   // TODO: deal with other events, maybe move this outside the function
   while((nread = editorReadEvents(E.in_handle, buf, 4)) == 0); // read until non-timeout event
-
-  // char errorMessage[64];
-  // sprintf(errorMessage, "read returned %d bytes", nread);
-  // die(errorMessage);
 
   char c = buf[0];
 
@@ -1150,15 +1141,17 @@ void initEditor() {
 
   if (!getWindowSize(&E.screenrows, &E.screencols)) die("getWindowSize");
   E.screenrows -= 2; // Make room for status bar and message prompts
+
+  E.og_terminal_size.X = 0;
+  E.og_terminal_size.Y = 0;
 }
 
 int main(int argc, char *argv[]) {
+  system("cls"); // write at top of screen!!!
   E.in_handle = GetStdHandle(STD_INPUT_HANDLE);
   E.out_handle = GetStdHandle(STD_OUTPUT_HANDLE);
   enableRawMode();
   initEditor();
-  // TODO: Not implemented yet!
-  disableScrolling();
   if (argc >= 2)
     editorOpen(argv[1]);
 
