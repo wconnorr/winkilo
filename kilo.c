@@ -665,44 +665,123 @@ void editorJump() {
 
 /*** SELECTION ***/
 
+// Takes a selection with head as anchor and tail as mobile part
+// Returns a selection with head as beginning of text
+// A selection is just 4 ints, so we'll return by value
+struct textSelection canonicalSelection(struct textSelection *sel) {
+  struct textSelection canon;
+
+  if (sel->heady < sel->taily) {
+    canon.heady = sel->heady;
+    canon.headx = sel->headx;
+    canon.taily = sel->taily;
+    canon.tailx = sel->tailx;
+  } else if (sel->heady > sel->taily) {
+    canon.heady = sel->taily;
+    canon.headx = sel->tailx;
+    canon.taily = sel->heady;
+    canon.tailx = sel->headx;
+  } else {
+    canon.heady = canon.taily = sel->heady;
+    if (sel->headx < sel->tailx) {
+      canon.headx = sel->headx;
+      canon.tailx = sel->tailx;
+    } else {
+      canon.headx = sel->tailx;
+      canon.tailx = sel->headx;
+    }
+  }
+  return canon;
+}
+
 int isInSelection(int row, int col) {
   // No selections exist
   if (E.selections == NULL || E.numselections == 0)
     return 0;
 
   for (int i = 0; i < E.numselections; i++) {
-    struct textSelection sel = E.selections[i];
-    int topy, topx, boty, botx;
+    struct textSelection canon = canonicalSelection(&E.selections[i]);
 
-    if (sel.heady < sel.taily) {
-      topy = sel.heady;
-      topx = sel.headx;
-      boty = sel.taily;
-      botx = sel.tailx;
-    } else if (sel.heady > sel.taily) {
-      topy = sel.taily;
-      topx = sel.tailx;
-      boty = sel.heady;
-      botx = sel.headx;
-    } else {
-      topy = boty = sel.heady;
-      if (sel.headx < sel.tailx) {
-        topx = sel.headx;
-        botx = sel.tailx;
-      } else {
-        topx = sel.tailx;
-        botx = sel.headx;
-      }
-    }
-
-    if (row < topy || row > boty) continue;
-    if (row > topy && row < boty) return 1;
+    if (row < canon.heady || row > canon.taily) continue;
+    if (row > canon.heady && row < canon.taily) return 1;
     // row == heady || row == taily
-    if (row == topy && col < topx) continue;
-    if (row == boty && col > botx) continue;
+    if (row == canon.heady && col < canon.headx) continue;
+    if (row == canon.taily && col > canon.tailx) continue;
     return 1;
   }
   return 0;
+}
+
+char *selectionToString(int *buflen) {
+  if (E.selections == NULL || E.numselections == 0){
+    *buflen = 0;
+    return NULL;
+  }
+  struct textSelection canon = canonicalSelection(E.selections);
+
+  int totlen = 0;
+
+  if (canon.heady == canon.taily) {
+    // If selection is 1 line:
+    totlen = canon.tailx - canon.headx + 2; // +1 inclusive, +1 0 term
+    *buflen = totlen;
+    char *buf = malloc(totlen);
+    memcpy(buf, &E.row[canon.heady].chars[canon.headx], totlen-1);
+    buf[totlen-1] = 0;
+    return buf;
+  }
+  // Multiline selection:
+  totlen = E.row[canon.heady].size - canon.headx + 2; //+2 for \r\n
+  for (int r = canon.heady+1; r < canon.taily; r++)
+    totlen += E.row[r].size + 2; // +2 for \r\n
+  totlen += canon.tailx + 2; // +1 for inclusive, +1 for 0 terminator
+  
+  *buflen = totlen;
+
+  char *buf = malloc(totlen);
+  char *p = buf;
+  memcpy(p, &E.row[canon.heady].chars[canon.headx], E.row[canon.heady].size - canon.headx);
+  p += E.row[canon.heady].size - canon.headx;
+  *p = '\r';
+  p++;
+  *p = '\n';
+  p++;
+  for (int i = canon.heady+1; i < canon.taily; i++) {
+    memcpy(p, E.row[i].chars, E.row[i].size);
+    p += E.row[i].size;
+    *p = '\r';
+    p++;
+    *p = '\n';
+    p++;
+  }
+  memcpy(p, E.row[canon.taily].chars, canon.tailx+1);
+  p += canon.tailx+1;
+  *p = 0;
+
+  return buf;
+}
+
+int copySelectionToClipboard() {
+  // Step 1: get selection text as contiguous string
+  int selectedlen;
+  char* selected = selectionToString(&selectedlen);
+  
+  editorSetStatusMessage("Copied %d bytes to clipboard", selectedlen);
+  // Step 2: get a handle to the selection string
+  HGLOBAL clip_handle = GlobalAlloc(0, selectedlen);
+  LPTSTR handle_head = GlobalLock(clip_handle);
+  memcpy(handle_head, selected, selectedlen);
+  GlobalUnlock(clip_handle);
+
+  // Step 3: OpenClipboard to current app
+  if(!OpenClipboard(NULL)) die("OpenClipboard");
+  if(!EmptyClipboard()) die("EmptyClipboard");
+  // Step 3: SetClipboardData 
+  if(!SetClipboardData(CF_TEXT, clip_handle)) die("SetClipboardData");
+  // Step 4: CloseClipboard
+  if(!CloseClipboard()) die("CloseClipboard");
+
+  free(selected);
 }
 
 /*** APPEND BUFFER ***/
@@ -1027,6 +1106,13 @@ void editorProcessEvent() {
       E.selections->taily=E.numrows;
       E.selections->tailx=-1; // Last row has no length
       E.numselections = 1;
+      break;
+      
+    case CTRL_KEY('x'):
+      // TODO: Delete selection
+    case CTRL_KEY('c'):
+      if (!copySelectionToClipboard())
+        die("copy_selection");
       break;
 
     case BACKSPACE:

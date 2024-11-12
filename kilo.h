@@ -9,7 +9,7 @@
 
 /*** DEFINES ***/
 
-#define KILO_VERSION "WINKILO:1.0.1"
+#define KILO_VERSION "WINKILO:1.1.0"
 #define KILO_TAB_STOP 8
 #define KILO_QUIT_TIMES 3
 
@@ -242,7 +242,10 @@ void editorJumpCallback(char *query, int key);
 void editorJump();
 
 /*** SELECTION ***/
+struct textSelection canonicalSelection(struct textSelection *sel);
 int isInSelection(int row, int col);
+char *selectionToString(int *buflen);
+int copySelectionToClipboard();
 
 /*** APPEND BUFFER ***/
 void abAppend(struct abuf *ab, const char *s, int len);
