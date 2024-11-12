@@ -58,7 +58,15 @@ enum editorKey {
   HOME_KEY,
   END_KEY,
   PAGE_UP,
-  PAGE_DOWN
+  PAGE_DOWN,
+  SHIFT_ARROW_LEFT,
+  SHIFT_ARROW_RIGHT,
+  SHIFT_ARROW_UP,
+  SHIFT_ARROW_DOWN,
+  CTRL_ARROW_LEFT,
+  CTRL_ARROW_RIGHT,
+  CTRL_ARROW_UP,
+  CTRL_ARROW_DOWN,
 };
 
 /*** DATA ***/
@@ -105,6 +113,17 @@ struct editorConfig {
   DWORD og_terminal_in_state;
   DWORD og_terminal_out_state;
   COORD og_terminal_size;
+
+  // selections: for simplicity, we only allow one contiguous space of selected text for now
+  struct textSelection *selections;
+  int numselections;
+};
+
+struct textSelection {
+  // indices matching E.cx/cy (rather than rx)
+  // taily >= heady; if taily == heady: headx <= tailx
+  // if head == tail, this is equivalent to their being no selection (just the cursor)
+  int headx, heady, tailx, taily;
 };
 
 // abuf is just an appendable string with an easy-to-access len (instead of reading until 0)
@@ -141,6 +160,22 @@ char *C_HL_keywords[] = {
   "void|", "const|", "enum|", "struct|", NULL
 };
 
+char *ASM6502_HL_extensions[] = {".asm", NULL};
+
+// TODO: color numbers by type (bin, dec, 0x, literal/addr)
+// TODO: assembler instructions (. commands)
+char *ASM6502_HL_keywords[] = {
+  "ADC", "AND", "ASL", "BIT", "CLC", "CLD", "CLI", "CLV", "CMP", "CPX", "CPY",
+  "DEC", "DEX", "DEY", "EOR", "INC", "INX", "INY", "LDA", "LDX", "LDY", "LSR",
+  "NOP", "ORA", "PHA", "PHP", "PLA", "PLP", "ROL", "ROR", "SBC",
+  "SEC", "SED", "SEI", "STA", "STX", "STY", "TAX", "TAY", "TSX", "TXA", "TXS", "TYA",
+
+   // Control flow operations as 2nd keyword highlights (jumps/branches,interupts)
+  "BCC|", "BCS|", "BEQ|", "BMI|", "BNE|", "BPL|", "BRK|", "BVC|", "BVS|", "JMP|",
+  "JSR|", "RTI|", "RTS|",
+  NULL
+};
+
 // Highlight database
 struct editorSyntax HLDB[] = {
   {
@@ -148,6 +183,13 @@ struct editorSyntax HLDB[] = {
     C_HL_extensions,
     C_HL_keywords,
     "//", "/*", "*/",
+    HL_HIGHLIGHT_NUMBERS | HL_HIGHLIGHT_STRINGS
+  },
+  {
+    "ASM 6502",
+    ASM6502_HL_extensions,
+    ASM6502_HL_keywords,
+    ";", "", "",
     HL_HIGHLIGHT_NUMBERS | HL_HIGHLIGHT_STRINGS
   }
 };
@@ -199,10 +241,13 @@ void editorFind();
 void editorJumpCallback(char *query, int key);
 void editorJump();
 
+/*** SELECTION ***/
+int isInSelection(int row, int col);
+
 /*** APPEND BUFFER ***/
 void abAppend(struct abuf *ab, const char *s, int len);
 char *editorPrompt(char *prompt, int numeric, void (*callback)(char *, int));
-void editorMoveCursor(int key);
+void editorMoveCursor(int key, int shift_pressed);
 int editorReadEvents(HANDLE handle, char *pc, int n_records);
 int editorReadKey();
 void editorProcessKeypress();

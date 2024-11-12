@@ -8,7 +8,11 @@
     - options (CTRL-O) - tabs-to-spaces, tab stop interval
     - undo/redo (CTRL-Z/Y; maybe CTRL-SHIFT-Z as well if I can figure out the inputs)
       - maybe have just a short undo-redo buffer: undo changes to last edited line?
-    - cut/copy/paste (CTRL-X/C/V) (requires mouse input for selection)
+    - add special behaviors when selections are active:
+      - writing character deletes all chars in selection
+      - backspace/delete just deletes the selection w/o moving cursor
+      - cut/copy/paste (CTRL-X/C/V)
+      - NOTE: maybe having a somewhat robust undo/redo would be safer before trying this!!!
     - auto-resize for window -> crashes using windowsAPI
     - scroll -> maybe set scroll area w/ codes and write whole file to screen buffer?
     - save-as
@@ -78,7 +82,7 @@ void enableRawMode() {
   // ENABLE:
   // Enable VT commands
   terminal_in_state |= ENABLE_VIRTUAL_TERMINAL_INPUT |
-  // Allow mouse selection (for copy command, TODO: mouse inputs are currently ignored)
+  // Allow mouse selection
                        ENABLE_MOUSE_INPUT |
   // Report window resizes
                        ENABLE_WINDOW_INPUT;
@@ -659,6 +663,48 @@ void editorJump() {
   }
 }
 
+/*** SELECTION ***/
+
+int isInSelection(int row, int col) {
+  // No selections exist
+  if (E.selections == NULL || E.numselections == 0)
+    return 0;
+
+  for (int i = 0; i < E.numselections; i++) {
+    struct textSelection sel = E.selections[i];
+    int topy, topx, boty, botx;
+
+    if (sel.heady < sel.taily) {
+      topy = sel.heady;
+      topx = sel.headx;
+      boty = sel.taily;
+      botx = sel.tailx;
+    } else if (sel.heady > sel.taily) {
+      topy = sel.taily;
+      topx = sel.tailx;
+      boty = sel.heady;
+      botx = sel.headx;
+    } else {
+      topy = boty = sel.heady;
+      if (sel.headx < sel.tailx) {
+        topx = sel.headx;
+        botx = sel.tailx;
+      } else {
+        topx = sel.tailx;
+        botx = sel.headx;
+      }
+    }
+
+    if (row < topy || row > boty) continue;
+    if (row > topy && row < boty) return 1;
+    // row == heady || row == taily
+    if (row == topy && col < topx) continue;
+    if (row == boty && col > botx) continue;
+    return 1;
+  }
+  return 0;
+}
+
 /*** APPEND BUFFER ***/
 
 // Append string s of length len to buffer
@@ -722,8 +768,16 @@ char *editorPrompt(char *prompt, int numeric, void (*callback)(char *, int)) {
   }
 }
 
-void editorMoveCursor(int key) {
+void editorMoveCursor(int key, int shift_pressed) {
   erow *row = (E.cy >= E.numrows) ? NULL : &E.row[E.cy];
+
+  // BEFORE WE MOVE: if shift is pressed and no selection exists, create new selection
+  if (shift_pressed && E.selections == NULL) {
+    E.selections = malloc(sizeof(struct textSelection));
+    E.numselections = 1;
+    E.selections->heady = E.cy;
+    E.selections->headx = E.cx;
+  }
 
   switch (key) {
     case ARROW_LEFT:
@@ -753,6 +807,16 @@ void editorMoveCursor(int key) {
       break;
   }
 
+  if (shift_pressed) {
+    E.selections->tailx = E.cx;
+    E.selections->taily = E.cy;
+  } else {
+    // Break selection
+    free(E.selections);
+    E.selections = NULL;
+    E.numselections = 0;
+  }
+
   // Snap cursor to end-of-line if it is past it
   row = (E.cy >= E.numrows) ? NULL : &E.row[E.cy];
   int rowlen = row ? row->size : 0;
@@ -763,8 +827,9 @@ void editorMoveCursor(int key) {
 int editorReadEvents(HANDLE handle, char *pc, int n_records) {
   static DWORD prev_mouse_button_state = 0;
   DWORD wait_ret = WaitForSingleObject(handle, 100);
-  if (wait_ret == WAIT_TIMEOUT)
+  if (wait_ret == WAIT_TIMEOUT) {
     return 0; // timeout
+  }
   else if (wait_ret == WAIT_OBJECT_0) {
     INPUT_RECORD *record_arr = malloc(sizeof(INPUT_RECORD)*n_records);
     // records are in buffer
@@ -796,8 +861,22 @@ int editorReadEvents(HANDLE handle, char *pc, int n_records) {
             E.cy = record_arr[i].Event.MouseEvent.dwMousePosition.Y + E.rowoff;
             E.rx = record_arr[i].Event.MouseEvent.dwMousePosition.X + E.coloff;
             E.cx = editorRowRxToCx(&E.row[E.cy], E.rx);
+            if (prev_mouse_button_state & curr_mouse_button_state & FROM_LEFT_1ST_BUTTON_PRESSED) {
+              if (E.selections == NULL) {
+                E.selections = malloc(sizeof(struct textSelection));
+                E.numselections = 1;
+                E.selections->heady = E.cy;
+                E.selections->headx = E.cx;
+              }
+              E.selections->taily = E.cy;
+              E.selections->tailx = E.cx;
+            } else {
+              // Clear selection
+              free(E.selections);
+              E.selections = NULL;
+              E.numselections = 0;
+            }
           }
-          // TODO: Drag for selection
 
           prev_mouse_button_state = curr_mouse_button_state;
           editorRefreshScreen();
@@ -824,14 +903,14 @@ int editorReadEvents(HANDLE handle, char *pc, int n_records) {
   }
 }
 
+// TODO: Refactor this and editorReadEvents
 // Blocks until a single keypress is read in
 // Returns an int because escape sequences will be mapped to a single value rather than multiple chars
 int editorReadKey() {
   int nread;
-  char buf[4];
+  char buf[6];
 
-  // TODO: deal with other events, maybe move this outside the function
-  while((nread = editorReadEvents(E.in_handle, buf, 4)) == 0); // read until non-timeout event
+  while((nread = editorReadEvents(E.in_handle, buf, 6)) == 0); // read until non-timeout event
 
   char c = buf[0];
 
@@ -870,6 +949,26 @@ int editorReadKey() {
         case 'F': return END_KEY;
       }
     }
+    if (nread == 6 && buf[2] == '1' && buf[3] == ';') {
+      // shift-arrow: "ESC[1;2A"(-D)
+      if (buf[4] == '2') {
+        // Shift-arrow
+        switch (buf[5]) {
+          case 'A': return SHIFT_ARROW_UP;
+          case 'B': return SHIFT_ARROW_DOWN;
+          case 'C': return SHIFT_ARROW_RIGHT;
+          case 'D': return SHIFT_ARROW_LEFT;
+        }
+      } else if (buf[4] == '5') {
+        // ctrl-arrow:  ESC[1;5A"(-D) 
+        switch (buf[5]) {
+          case 'A': return CTRL_ARROW_UP;
+          case 'B': return CTRL_ARROW_DOWN;
+          case 'C': return CTRL_ARROW_RIGHT;
+          case 'D': return CTRL_ARROW_LEFT;
+        }
+      }
+    }
     // Default to returning ESC key
     return ESC;
   }
@@ -901,10 +1000,12 @@ void editorProcessEvent() {
       editorSave();
       break;
 
+    case CTRL_ARROW_LEFT:
     case HOME_KEY:
       E.cx = 0;
       break;
 
+    case CTRL_ARROW_RIGHT:
     case END_KEY:
       if (E.cy < E.numrows)
         E.cx = E.row[E.cy].size;
@@ -918,33 +1019,52 @@ void editorProcessEvent() {
       editorJump();
       break;
 
+    case CTRL_KEY('a'):
+      free(E.selections);
+      E.selections = malloc(sizeof(struct textSelection));
+      E.selections->heady=0;
+      E.selections->headx=0;
+      E.selections->taily=E.numrows;
+      E.selections->tailx=-1; // Last row has no length
+      E.numselections = 1;
+      break;
+
     case BACKSPACE:
     case CTRL_KEY('h'): // Old-timey backspace escape
     case DEL_KEY:
       // If delete: delete next char; else delete previous char
-      if (c == DEL_KEY) editorMoveCursor(ARROW_RIGHT);
+      if (c == DEL_KEY) editorMoveCursor(ARROW_RIGHT, 0);
       editorDelChar();
       break;
 
+    case CTRL_ARROW_UP:
+    case CTRL_ARROW_DOWN:
     case PAGE_UP:
     case PAGE_DOWN:
-      if (c == PAGE_UP)
+      if (c == PAGE_UP || c == CTRL_ARROW_UP)
         E.cy = E.rowoff;
-      else { // PAGE_DOWN
+      else { // PAGE_DOWN || CTRL_ARROW_DOWN
         E.cy = E.rowoff + E.screenrows-1;
         if (E.cy > E.numrows) E.cy = E.numrows;
       }
 
       int times = E.screenrows; // do it this way for scrolling
       while (times--)
-        editorMoveCursor(c == PAGE_UP ? ARROW_UP : ARROW_DOWN);
+        editorMoveCursor(c == PAGE_UP || c == CTRL_ARROW_UP ? ARROW_UP : ARROW_DOWN, 0);
       break;
 
     case ARROW_UP:
     case ARROW_DOWN:
     case ARROW_RIGHT:
     case ARROW_LEFT:
-      editorMoveCursor(c);
+      editorMoveCursor(c, 0);
+      break;
+
+    case SHIFT_ARROW_UP:
+    case SHIFT_ARROW_DOWN:
+    case SHIFT_ARROW_RIGHT:
+    case SHIFT_ARROW_LEFT:
+      editorMoveCursor(c + (ARROW_UP-SHIFT_ARROW_UP), 1);
       break;
 
     case CTRL_KEY('l'): // Refresh screen - already done after any keypress
@@ -992,6 +1112,7 @@ void editorDrawRows(struct abuf *ab) {
   // Draw column of ~'s to signify lines after EOF 
   for (int y = 0; y < E.screenrows; y++) {
     int filerow = y + E.rowoff;
+    int in_selection = 0;
     if (filerow >= E.numrows) {
       if (E.numrows == 0 && y == E.screenrows / 3) {
         // Write welcome message for blank file
@@ -1013,10 +1134,26 @@ void editorDrawRows(struct abuf *ab) {
       if (len < 0) len = 0;
       else if (len > E.screencols) len = E.screencols;
       char *c = &E.row[filerow].render[E.coloff]; 
+
       // Syntax highlighting
       unsigned char *hl = &E.row[filerow].hl[E.coloff];
       char current_color = -1;
       for (int j = 0; j < len; j++) {
+        // If under selection: apply reversed colors
+        if (!in_selection && isInSelection(filerow, j)) {
+          abAppend(ab, "\x1b[7m", 4);
+          in_selection = 1;
+        } else if (in_selection && !isInSelection(filerow,j)) {
+          abAppend(ab, "\x1b[m", 3);
+          in_selection = 0;
+          if (current_color != -1) {
+            // set previous color back to normal
+            char buf[16];
+            int clen = snprintf(buf, sizeof(buf), "\x1b[%dm", current_color);
+            abAppend(ab, buf, clen);
+          }
+        }
+
         if (iscntrl(c[j])) {
           // Draw control characters as printables w/ inverted colors
           char sym = (c[j] <= 26) ? '@' + c[j] : '?'; // \0 is @, others are capital letters, beyond is all ?s
@@ -1048,6 +1185,7 @@ void editorDrawRows(struct abuf *ab) {
       }
       abAppend(ab, "\x1b[39m", 5); // reset text color to default just in case
     }
+    if (in_selection) abAppend(ab, "\x1b[m", 3);
     abAppend(ab, "\x1b[K", 3); // erase everything right of the end of line
     abAppend(ab, "\r\n", 2); 
   }
@@ -1144,6 +1282,9 @@ void initEditor() {
 
   E.og_terminal_size.X = 0;
   E.og_terminal_size.Y = 0;
+
+  E.selections = NULL;
+  E.numselections = 0;
 }
 
 int main(int argc, char *argv[]) {

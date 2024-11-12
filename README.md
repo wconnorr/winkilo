@@ -14,6 +14,10 @@ Compile using a standard C compiler, such as:
 In addition, it may be necessary to enable virtual terminal (VT) commands in the terminal:
 `Set-ItemProperty HKCU:\Console VirtualTerminalLevel -Type DWORD 1`
 
+### User Guide
+
+KiloGuide.md contains explanations of features for the average (nontechnical) user.
+
 ### Customization
 
 Kilo was designed to be lightweight and easy to customize. I haven't added customization in the application itself, but minor modifications to the `/*** CUSTOMIZATION ***/` section of the `.h` file.
