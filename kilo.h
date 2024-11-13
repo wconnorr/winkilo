@@ -227,7 +227,7 @@ void editorRowDelChar(erow *row, int at);
 /*** EDITOR OPERATIONS ***/
 int editorMatchSpaces(erow *row_src, erow *row_dst);
 void editorInsertChar(int c);
-void editorInsertNewline();
+void editorInsertNewline(int match_spaces);
 void editorDelChar();
 
 /*** FILE IO ***/
@@ -245,15 +245,19 @@ void editorJump();
 struct textSelection canonicalSelection(struct textSelection *sel);
 int isInSelection(int row, int col);
 char *selectionToString(int *buflen);
-int copySelectionToClipboard();
+void copySelectionToClipboard();
 
 /*** APPEND BUFFER ***/
 void abAppend(struct abuf *ab, const char *s, int len);
+void abFree(struct abuf *ab);
+
+/*** INPUT ***/
 char *editorPrompt(char *prompt, int numeric, void (*callback)(char *, int));
 void editorMoveCursor(int key, int shift_pressed);
 int editorReadEvents(HANDLE handle, char *pc, int n_records);
 int editorReadKey();
 void editorProcessKeypress();
+void editorPasteFromClipboard();
 
 /*** OUTPUT ***/
 void editorScroll();

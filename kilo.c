@@ -445,7 +445,7 @@ void editorInsertChar(int c) {
   E.cx++;
 }
 
-void editorInsertNewline() {
+void editorInsertNewline(int match_spaces) {
   if (E.cx == 0)
     editorInsertRow(E.cy, "", 0); // just insert new line
   else {
@@ -457,10 +457,14 @@ void editorInsertNewline() {
     row->chars[row->size] = '\0';
     editorUpdateRow(row);
   }
-  int spaces = editorMatchSpaces(&E.row[E.cy], &E.row[E.cy+1]);
-  editorUpdateRow(&E.row[E.cy+1]);
+  if (match_spaces) {
+    int spaces = editorMatchSpaces(&E.row[E.cy], &E.row[E.cy+1]);
+    editorUpdateRow(&E.row[E.cy+1]);
+    E.cx = spaces;
+  } else {
+    E.cx = 0;
+  }
   E.cy++;
-  E.cx = spaces;
 }
 
 // Deletes character less of cursor (backspace)
@@ -761,24 +765,22 @@ char *selectionToString(int *buflen) {
   return buf;
 }
 
-int copySelectionToClipboard() {
-  // Step 1: get selection text as contiguous string
+void copySelectionToClipboard() {
   int selectedlen;
   char* selected = selectionToString(&selectedlen);
   
   editorSetStatusMessage("Copied %d bytes to clipboard", selectedlen);
-  // Step 2: get a handle to the selection string
+  // Create a handle to the selection string
   HGLOBAL clip_handle = GlobalAlloc(0, selectedlen);
   LPTSTR handle_head = GlobalLock(clip_handle);
   memcpy(handle_head, selected, selectedlen);
   GlobalUnlock(clip_handle);
 
-  // Step 3: OpenClipboard to current app
   if(!OpenClipboard(NULL)) die("OpenClipboard");
   if(!EmptyClipboard()) die("EmptyClipboard");
-  // Step 3: SetClipboardData 
+  
   if(!SetClipboardData(CF_TEXT, clip_handle)) die("SetClipboardData");
-  // Step 4: CloseClipboard
+
   if(!CloseClipboard()) die("CloseClipboard");
 
   free(selected);
@@ -1062,7 +1064,7 @@ void editorProcessEvent() {
 
   switch(c) {
     case '\r': // ENTER key
-      editorInsertNewline();
+      editorInsertNewline(1);
       break;
 
     case CTRL_KEY('q'):
@@ -1111,8 +1113,11 @@ void editorProcessEvent() {
     case CTRL_KEY('x'):
       // TODO: Delete selection
     case CTRL_KEY('c'):
-      if (!copySelectionToClipboard())
-        die("copy_selection");
+      copySelectionToClipboard();
+      break;
+
+    case CTRL_KEY('v'):
+      editorPasteFromClipboard();
       break;
 
     case BACKSPACE:
@@ -1163,6 +1168,32 @@ void editorProcessEvent() {
   }
 
   quit_times = KILO_QUIT_TIMES;
+}
+
+void editorPasteFromClipboard() {
+  if(!OpenClipboard(NULL)) die("OpenClipboard");
+  
+  HANDLE handle = GetClipboardData(CF_TEXT);
+  if (handle != NULL) {
+    char *paste_text = GlobalLock(handle);
+
+    editorSetStatusMessage("Pasting %s", paste_text);
+
+    // Treat inputs as standard character inputs, like when typing
+    // Note that this will allow for control code insertions as actual chars
+    //   except for new lines and carriage returns
+    for (int i = 0; paste_text[i] != 0; i++) {
+      if (paste_text[i] == '\r');
+      else if (paste_text[i] == '\n')
+        editorInsertNewline(0);
+      else
+        editorInsertChar(paste_text[i]);
+    }
+    GlobalUnlock(handle);
+  }
+
+  if(!CloseClipboard()) die("CloseClipboard");
+
 }
 
 /*** OUTPUT ***/
