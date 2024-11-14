@@ -245,6 +245,7 @@ void editorJump();
 struct textSelection canonicalSelection(struct textSelection *sel);
 int isInSelection(int row, int col);
 char *selectionToString(int *buflen);
+void deleteSelection();
 void copySelectionToClipboard();
 
 /*** APPEND BUFFER ***/

@@ -467,7 +467,7 @@ void editorInsertNewline(int match_spaces) {
   E.cy++;
 }
 
-// Deletes character less of cursor (backspace)
+// Deletes character left of cursor (backspace)
 void editorDelChar() {
   if (E.cy == E.numrows) return;
   if (E.cx == 0 && E.cy == 0) return;
@@ -763,6 +763,58 @@ char *selectionToString(int *buflen) {
   *p = 0;
 
   return buf;
+}
+
+void deleteSelection() {
+  struct textSelection sel = canonicalSelection(E.selections);
+
+  // Get size of new row: remaining head row + remaining tail row
+  int tail_size = E.row[sel.taily].size - sel.tailx -1;
+  tail_size = tail_size < 0 ? 0 : tail_size;
+  int new_row_size = sel.headx + tail_size;
+
+  // Realloc old row char, reset size
+  if (new_row_size <= E.row[sel.heady].size) {
+    // put tail first and then realloc
+    // the strings may overlap: we must use memmove
+    if (tail_size > 0)
+      memmove(&E.row[sel.heady].chars[sel.headx], &E.row[sel.taily].chars[sel.tailx+1], tail_size);
+    E.row[sel.heady].chars = realloc(E.row[sel.heady].chars, new_row_size);
+  } else {
+    // Only way new one could be bigger is if its multiline:
+    // no overlap!
+    E.row[sel.heady].chars = realloc(E.row[sel.heady].chars, new_row_size);
+    if (tail_size > 0)
+      memcpy(&E.row[sel.heady].chars[sel.headx], &E.row[sel.taily].chars[sel.tailx+1], tail_size);
+  }
+  E.row[sel.heady].size = new_row_size;
+  E.cx = sel.headx;
+  E.cy = sel.heady;
+
+  E.row[sel.heady].size = new_row_size;
+
+  // Set row char updateRow()
+  editorUpdateRow(&E.row[sel.heady]);
+
+  int gap = sel.taily - sel.heady;
+  // Delete all rows but head shift all other rows back
+  int r;
+  for (r = sel.heady+1; r <= sel.taily; r++) {
+    // Free each row
+    // Afterward, shift rows down & reduce E.row's size
+    editorFreeRow(&E.row[r]);
+    if (r+gap < E.numrows)
+      E.row[r] = E.row[r+gap];
+  }
+  while(r < E.numrows-gap) {
+    E.row[r] = E.row[r+gap];
+    r++;
+  }
+  E.numrows -= gap;
+
+  free(E.selections);
+  E.selections = NULL;
+  E.numselections = 0;
 }
 
 void copySelectionToClipboard() {
@@ -1111,9 +1163,10 @@ void editorProcessEvent() {
       break;
       
     case CTRL_KEY('x'):
-      // TODO: Delete selection
     case CTRL_KEY('c'):
       copySelectionToClipboard();
+      if (c == CTRL_KEY('x'))
+        deleteSelection();
       break;
 
     case CTRL_KEY('v'):
@@ -1123,9 +1176,13 @@ void editorProcessEvent() {
     case BACKSPACE:
     case CTRL_KEY('h'): // Old-timey backspace escape
     case DEL_KEY:
-      // If delete: delete next char; else delete previous char
-      if (c == DEL_KEY) editorMoveCursor(ARROW_RIGHT, 0);
-      editorDelChar();
+      if (E.numselections == 0 || E.selections == NULL) {
+        // If delete: delete next char; else delete previous char
+        if (c == DEL_KEY) editorMoveCursor(ARROW_RIGHT, 0);
+        editorDelChar();
+      } else {
+        deleteSelection();
+      }
       break;
 
     case CTRL_ARROW_UP:

@@ -25,6 +25,9 @@ WinKilo accepts several function inputs caused by a single key press or pressing
 - Ctrl+J - jump-to - jumps to a given line number
 - Ctrl+A - creates a selection over the entire file
 - Ctrl+H - another backspace (for compatibility with older systems)
+- Ctrl+C - copy
+- Ctrl+X - cut
+- Ctrl+V - paste (note: only text can be pasted from clipboard)
 
 ## Mouse Inputs
 
