@@ -114,9 +114,8 @@ struct editorConfig {
   DWORD og_terminal_out_state;
   COORD og_terminal_size;
 
-  // selections: for simplicity, we only allow one contiguous space of selected text for now
-  struct textSelection *selections;
-  int numselections;
+  // selections: for simplicity, we only allow one contiguous space of selected text
+  struct textSelection *selection;
 };
 
 struct textSelection {

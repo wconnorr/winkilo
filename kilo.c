@@ -700,28 +700,25 @@ struct textSelection canonicalSelection(struct textSelection *sel) {
 
 int isInSelection(int row, int col) {
   // No selections exist
-  if (E.selections == NULL || E.numselections == 0)
+  if (E.selection == NULL)
     return 0;
 
-  for (int i = 0; i < E.numselections; i++) {
-    struct textSelection canon = canonicalSelection(&E.selections[i]);
+    struct textSelection canon = canonicalSelection(E.selection);
 
-    if (row < canon.heady || row > canon.taily) continue;
-    if (row > canon.heady && row < canon.taily) return 1;
-    // row == heady || row == taily
-    if (row == canon.heady && col < canon.headx) continue;
-    if (row == canon.taily && col > canon.tailx) continue;
-    return 1;
-  }
-  return 0;
+  if (row < canon.heady || row > canon.taily) return 0;
+  if (row > canon.heady && row < canon.taily) return 1;
+  // row == heady || row == taily
+  if (row == canon.heady && col < canon.headx) return 0;
+  if (row == canon.taily && col > canon.tailx) return 0;
+  return 1;
 }
 
 char *selectionToString(int *buflen) {
-  if (E.selections == NULL || E.numselections == 0){
+  if (E.selection == NULL){
     *buflen = 0;
     return NULL;
   }
-  struct textSelection canon = canonicalSelection(E.selections);
+  struct textSelection canon = canonicalSelection(E.selection);
 
   int totlen = 0;
 
@@ -766,7 +763,7 @@ char *selectionToString(int *buflen) {
 }
 
 void deleteSelection() {
-  struct textSelection sel = canonicalSelection(E.selections);
+  struct textSelection sel = canonicalSelection(E.selection);
 
   // Get size of new row: remaining head row + remaining tail row
   int tail_size = E.row[sel.taily].size - sel.tailx -1;
@@ -812,9 +809,8 @@ void deleteSelection() {
   }
   E.numrows -= gap;
 
-  free(E.selections);
-  E.selections = NULL;
-  E.numselections = 0;
+  free(E.selection);
+  E.selection = NULL;
 }
 
 void copySelectionToClipboard() {
@@ -905,11 +901,10 @@ void editorMoveCursor(int key, int shift_pressed) {
   erow *row = (E.cy >= E.numrows) ? NULL : &E.row[E.cy];
 
   // BEFORE WE MOVE: if shift is pressed and no selection exists, create new selection
-  if (shift_pressed && E.selections == NULL) {
-    E.selections = malloc(sizeof(struct textSelection));
-    E.numselections = 1;
-    E.selections->heady = E.cy;
-    E.selections->headx = E.cx;
+  if (shift_pressed && E.selection == NULL) {
+    E.selection = malloc(sizeof(struct textSelection));
+    E.selection->heady = E.cy;
+    E.selection->headx = E.cx;
   }
 
   switch (key) {
@@ -941,13 +936,12 @@ void editorMoveCursor(int key, int shift_pressed) {
   }
 
   if (shift_pressed) {
-    E.selections->tailx = E.cx;
-    E.selections->taily = E.cy;
+    E.selection->tailx = E.cx;
+    E.selection->taily = E.cy;
   } else {
     // Break selection
-    free(E.selections);
-    E.selections = NULL;
-    E.numselections = 0;
+    free(E.selection);
+    E.selection = NULL;
   }
 
   // Snap cursor to end-of-line if it is past it
@@ -995,19 +989,17 @@ int editorReadEvents(HANDLE handle, char *pc, int n_records) {
             E.rx = record_arr[i].Event.MouseEvent.dwMousePosition.X + E.coloff;
             E.cx = editorRowRxToCx(&E.row[E.cy], E.rx);
             if (prev_mouse_button_state & curr_mouse_button_state & FROM_LEFT_1ST_BUTTON_PRESSED) {
-              if (E.selections == NULL) {
-                E.selections = malloc(sizeof(struct textSelection));
-                E.numselections = 1;
-                E.selections->heady = E.cy;
-                E.selections->headx = E.cx;
+              if (E.selection == NULL) {
+                E.selection = malloc(sizeof(struct textSelection));
+                E.selection->heady = E.cy;
+                E.selection->headx = E.cx;
               }
-              E.selections->taily = E.cy;
-              E.selections->tailx = E.cx;
+              E.selection->taily = E.cy;
+              E.selection->tailx = E.cx;
             } else {
               // Clear selection
-              free(E.selections);
-              E.selections = NULL;
-              E.numselections = 0;
+              free(E.selection);
+              E.selection = NULL;
             }
           }
 
@@ -1153,13 +1145,12 @@ void editorProcessEvent() {
       break;
 
     case CTRL_KEY('a'):
-      free(E.selections);
-      E.selections = malloc(sizeof(struct textSelection));
-      E.selections->heady=0;
-      E.selections->headx=0;
-      E.selections->taily=E.numrows;
-      E.selections->tailx=-1; // Last row has no length
-      E.numselections = 1;
+      free(E.selection);
+      E.selection = malloc(sizeof(struct textSelection));
+      E.selection->heady=0;
+      E.selection->headx=0;
+      E.selection->taily=E.numrows;
+      E.selection->tailx=-1; // Last row has no length
       break;
       
     case CTRL_KEY('x'):
@@ -1176,7 +1167,7 @@ void editorProcessEvent() {
     case BACKSPACE:
     case CTRL_KEY('h'): // Old-timey backspace escape
     case DEL_KEY:
-      if (E.numselections == 0 || E.selections == NULL) {
+      if (E.selection == NULL) {
         // If delete: delete next char; else delete previous char
         if (c == DEL_KEY) editorMoveCursor(ARROW_RIGHT, 0);
         editorDelChar();
@@ -1233,8 +1224,6 @@ void editorPasteFromClipboard() {
   HANDLE handle = GetClipboardData(CF_TEXT);
   if (handle != NULL) {
     char *paste_text = GlobalLock(handle);
-
-    editorSetStatusMessage("Pasting %s", paste_text);
 
     // Treat inputs as standard character inputs, like when typing
     // Note that this will allow for control code insertions as actual chars
@@ -1457,8 +1446,7 @@ void initEditor() {
   E.og_terminal_size.X = 0;
   E.og_terminal_size.Y = 0;
 
-  E.selections = NULL;
-  E.numselections = 0;
+  E.selection = NULL;
 }
 
 int main(int argc, char *argv[]) {
