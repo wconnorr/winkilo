@@ -5,18 +5,19 @@
   Editor features are based on kilo tutorial at: https://viewsourcecode.org/snaptoken/kilo/
 
   TODO:
+    - Make sure all rows are null-terminated!!!!
     - options (CTRL-O) - tabs-to-spaces, tab stop interval
-    - undo/redo (CTRL-Z/Y; maybe CTRL-SHIFT-Z as well if I can figure out the inputs)
-      - maybe have just a short undo-redo buffer: undo changes to last edited line?
-    - add special behaviors when selections are active:
-      - writing character deletes all chars in selection
-      - backspace/delete just deletes the selection w/o moving cursor
-      - cut/copy/paste (CTRL-X/C/V)
-      - NOTE: maybe having a somewhat robust undo/redo would be safer before trying this!!!
-    - auto-resize for window -> crashes using windowsAPI
+    - undo
+    - expand undo/redo buffer
     - scroll -> maybe set scroll area w/ codes and write whole file to screen buffer?
-    - save-as
+    - save-as (CRTL-SHIFT-S)
     - diff-checker to last saved version of file (at least showing lines added/removed/changed)
+    - line numbering - 4 right-aligned digits shows, diff-checker on 5th col
+*/
+
+/* 
+BUGS:
+  - enter at EOF line crashes
 */
 
 /*** INCLUDES ***/
@@ -101,10 +102,12 @@ void enableRawMode() {
     die("SetConsoleMode");      
 }
 
+// Gets cursor position on terminal character grid
+// Returns success bool
 int getCursorPosition(int *rows, int *cols) {
   char buf[32];
 
-  if (write(STDOUT_FILENO, "\x1b[6n", 4) != 4) return -1; // query cursor position
+  if (write(STDOUT_FILENO, "\x1b[6n", 4) != 4) return 0; // query cursor position
 
   int i;
   // cursor position returned as 27']'<HEIGHT>';'<WIDTH>'R'
@@ -114,14 +117,14 @@ int getCursorPosition(int *rows, int *cols) {
   }
   buf[i] = '\0';
 
-  if (buf[0] != ESC || buf[1] != '[') return -1;
-  if (sscanf(&buf[2], "%d;%d", rows, cols) != 2) return -1;
+  if (buf[0] != ESC || buf[1] != '[') return 0;
+  if (sscanf(&buf[2], "%d;%d", rows, cols) != 2) return 0;
 
-  return 0;
+  return 1;
 }
 
 // Gets terminal window dimensions and sets to rows and cols params
-// Returns bool: 0 if failure, else non-zero
+// Returns success bool
 int getWindowSize(int *rows, int *cols) {
   // First try the real way: query system
   CONSOLE_SCREEN_BUFFER_INFO screenInfo;
@@ -132,12 +135,12 @@ int getWindowSize(int *rows, int *cols) {
   } else {
     // Put the cursor to the bottom right and query the VT
     if (write(STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12) return 0;
-      return (getCursorPosition(rows, cols) != -1);
+      return getCursorPosition(rows, cols);
   }
 }
 
 
-
+// TODO: Should this be its own file???
 /*** SYNTAX HIGHLIGHTING ***/
 
 int is_separator(int c) {
@@ -338,6 +341,8 @@ void editorUpdateRow(erow *row) {
   editorUpdateSyntax(row);
 }
 
+// Inserts a row w/ given string "s" before current row "at"
+// If s is null, inserts a row w/ empty string
 void editorInsertRow(int at, char *s, size_t len) {
   if (at < 0 || at > E.numrows) return;
 
@@ -349,7 +354,8 @@ void editorInsertRow(int at, char *s, size_t len) {
 
   E.row[at].size = len;
   E.row[at].chars = malloc(len+1);
-  memcpy(E.row[at].chars, s, len);
+  if (s != NULL)
+    memcpy(E.row[at].chars, s, len);
   E.row[at].chars[len] = '\0';
 
   E.row[at].rsize = 0;
@@ -379,7 +385,7 @@ void editorDelRow(int at) {
 }
 
 // Inserts character into given row at given position.
-void editorRowInsertChar(erow *row, int at, int c) {
+void editorRowInsertChar(erow *row, int at, char c) {
   if (at < 0 || at > row->size) at = row->size;
   row->chars = realloc(row->chars, row->size + 2);
   memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1);
@@ -437,11 +443,12 @@ int editorMatchSpaces(erow *row_src, erow *row_dst) {
 }
 
 // Inserts character at cursors. If on line past EOF, it creates a new row.
-void editorInsertChar(int c) {
+void editorInsertChar(char c) {
   if (E.cy == E.numrows) {
     editorInsertRow(E.numrows, "", 0); // append row at end
   }
   editorRowInsertChar(&E.row[E.cy], E.cx, c);
+  addUndoEvent(EVENT_INSERT, E.cy, E.cx, &c, 1);
   E.cx++;
 }
 
@@ -472,6 +479,11 @@ void editorDelChar() {
   if (E.cy == E.numrows) return;
   if (E.cx == 0 && E.cy == 0) return;
 
+  if (E.cx > 0)
+    addUndoEvent(EVENT_DELETE, E.cy, E.cx-1, &E.row[E.cy].chars[E.cx-1], 1);
+  else
+    addUndoEvent(EVENT_DELETE, E.cy, -1, "\n", 1);
+
   erow *row = &E.row[E.cy];
   if (E.cx > 0)
     editorRowDelChar(row, --E.cx);
@@ -481,6 +493,49 @@ void editorDelChar() {
     editorRowAppendString(&E.row[E.cy - 1], row->chars, row->size);
     editorDelRow(E.cy--);
   }
+}
+
+// Insert given lines of text at the cursor position
+void editorInsertText(char* text, int textlen, int record_undo_event) {
+  if (record_undo_event)
+    addUndoEvent(EVENT_INSERT, E.cy, E.cx, text, textlen);
+
+  if (E.cy == E.numrows) {
+    editorInsertRow(E.cy, NULL, 0);
+  }
+
+  // Copy text from E.cx+1 ->
+  char* rest_of_line = NULL;
+  int rol_size = E.row[E.cy].size - E.cx; // 11-8=3
+  if (rol_size > 0) {
+    rest_of_line = malloc(rol_size);
+    memcpy(rest_of_line, &E.row[E.cy].chars[E.cx], rol_size);
+  }
+  E.row[E.cy].size = E.cx;
+
+  // Get lines and paste them in: look for '\r\n's
+  int line_start = 0;
+  for (int i = 0; i < textlen; i++) {
+    if (text[i] == '\n') {
+      int line_end = i>0&&text[i-1]=='\r'?i-1:i; // ignore '\r'
+      // append at end of current line
+      if (line_start == 0)
+        editorRowAppendString(&E.row[E.cy], text, line_end);
+      else
+        editorInsertRow(++E.cy, &text[line_start], line_end-line_start);
+      line_start = i+1;
+    }
+  }
+  // Insert final part + rest_of_line
+  if (line_start == 0)
+    editorRowAppendString(&E.row[E.cy], text, textlen);
+  else
+    editorInsertRow(++E.cy, &text[line_start], textlen-line_start);
+  E.cx = E.row[E.cy].size;
+  if (rol_size > 0)
+    editorRowAppendString(&E.row[E.cy], rest_of_line, rol_size);
+
+  free(rest_of_line);
 }
 
 /*** FILE IO ***/
@@ -713,12 +768,17 @@ int isInSelection(int row, int col) {
   return 1;
 }
 
+// Turns selected text into contiguous string
+// String is returned, buflen is updated
 char *selectionToString(int *buflen) {
   if (E.selection == NULL){
     *buflen = 0;
     return NULL;
   }
   struct textSelection canon = canonicalSelection(E.selection);
+  // Prevent selecting past final character
+  if (E.row[canon.taily].size == canon.tailx)
+    canon.tailx--;
 
   int totlen = 0;
 
@@ -762,13 +822,22 @@ char *selectionToString(int *buflen) {
   return buf;
 }
 
-void deleteSelection() {
+void deleteSelection(int record_undo_event) {
+  // End if no selection exists
+  if (E.selection == NULL) return;
+
   struct textSelection sel = canonicalSelection(E.selection);
 
   // Get size of new row: remaining head row + remaining tail row
   int tail_size = E.row[sel.taily].size - sel.tailx -1;
   tail_size = tail_size < 0 ? 0 : tail_size;
   int new_row_size = sel.headx + tail_size;
+
+  if (record_undo_event) {
+    int selectlen = 0;
+    char *selecttext = selectionToString(&selectlen);
+    addUndoEvent(EVENT_DELETE, sel.heady, sel.headx, selecttext, selectlen-1);
+  }
 
   // Realloc old row char, reset size
   if (new_row_size <= E.row[sel.heady].size) {
@@ -817,7 +886,10 @@ void copySelectionToClipboard() {
   int selectedlen;
   char* selected = selectionToString(&selectedlen);
   
-  editorSetStatusMessage("Copied %d bytes to clipboard", selectedlen);
+  if (selectedlen == 0 || selected == NULL)
+    return;
+  
+  editorSetStatusMessage("Copied selection to clipboard");
   // Create a handle to the selection string
   HGLOBAL clip_handle = GlobalAlloc(0, selectedlen);
   LPTSTR handle_head = GlobalLock(clip_handle);
@@ -832,6 +904,101 @@ void copySelectionToClipboard() {
   if(!CloseClipboard()) die("CloseClipboard");
 
   free(selected);
+}
+
+/*** UNDO/REDO ***/
+
+void addUndoEvent(int eventType, int cy, int cx, char* text, int textlen) {
+  // TODO: Handle non-singular buffer!!!
+  // Right now, we are just overwriting the existing element on the buff
+  E.undoBuf->eventType = eventType;
+  E.undoBuf->cy = cy;
+  E.undoBuf->cx = cx;
+  if (E.undoBufSize > 0)
+    free(E.undoBuf->text);
+  if (textlen == 0 || text == NULL) {
+    E.undoBuf->text = NULL;
+    E.undoBuf->textlen = 0;
+  } else {
+    E.undoBuf->text = malloc(textlen);
+    memcpy(E.undoBuf->text, text, textlen);
+    E.undoBuf->textlen = textlen;
+  }
+  E.undoBufSize = 1;
+
+  char* textstr = malloc(textlen+1);
+  memcpy(textstr, text, textlen);
+  textstr[textlen] = 0;
+}
+
+void editorUndo() {
+  if (E.undoBufSize > 0) {
+    // Pop off undo buffer
+    struct undoEvent event = E.undoBuf[--E.undoBufSize];
+    switch(event.eventType) {
+      case EVENT_INSERT:
+        // Delete inserted text
+        // Create selection & delete selection
+        if (!E.selection) {
+          E.selection = malloc(sizeof(struct textSelection));
+        }
+        E.selection->heady = E.undoBuf->cy;
+        E.selection->headx = E.undoBuf->cx;
+        
+        // TODO: maybe refactor?
+        int last_chunk = 0;
+        int num_rows = 0;
+        for (int i = 0; i < E.undoBuf->textlen; i++) {
+          switch(E.undoBuf->text[i]) {
+            case ('\n'):
+              num_rows++;
+              last_chunk = 0;
+              break;
+            case ('\r'):
+            case (0):
+              break;
+            default:
+              last_chunk++;
+          }
+        }
+        if (num_rows==0)
+          last_chunk += E.selection->headx;
+        E.selection->taily = E.selection->heady+num_rows;
+        E.selection->tailx = last_chunk-1; // tail is inclusive!
+
+        editorSetStatusMessage("UNDO SELECTION: (r%d, c%d) -> (r%d, c%d)", E.selection->heady, E.selection->headx, E.selection->taily, E.selection->tailx);
+
+        deleteSelection(0);
+
+        // Return cursor to position
+        E.cx = event.cx;
+        E.cy = event.cy;
+        break;
+      case EVENT_DELETE:
+        if (E.cx == -1) {
+          // Reinsert new line
+          E.cy = event.cy;
+          E.cx = 0;
+          editorInsertNewline(0);
+        }
+        E.cx = event.cx;
+        E.cy = event.cy;
+        editorInsertText(event.text, event.textlen, 0);
+        editorSetStatusMessage("UNDO DELETE: INSERTED %d CHARS", event.textlen);
+        break;
+      default:
+        editorSetStatusMessage("UNDO NULL!!!");
+        break;
+    }
+    // push event onto redo buf
+    E.redoBuf[0] = event;  // TODO: expand bufs!
+    E.redoBufSize = 1;
+  } else
+    editorSetStatusMessage("No stored actions to undo!");
+}
+
+void editorRedo() {
+  editorSetStatusMessage("Redo attempted: NOT IMPLEMENTED!");
 }
 
 /*** APPEND BUFFER ***/
@@ -951,7 +1118,7 @@ void editorMoveCursor(int key, int shift_pressed) {
     E.cx = rowlen;
 }
 
-int editorReadEvents(HANDLE handle, char *pc, int n_records) {
+int editorReadEvents(HANDLE handle, char *pc, int n_records, DWORD* ctrl_key_states) {
   static DWORD prev_mouse_button_state = 0;
   DWORD wait_ret = WaitForSingleObject(handle, 100);
   if (wait_ret == WAIT_TIMEOUT) {
@@ -976,6 +1143,7 @@ int editorReadEvents(HANDLE handle, char *pc, int n_records) {
           pc[i] = record_arr[i].Event.KeyEvent.uChar.AsciiChar;
           if (pc[i] == 0)
             retval = 0;
+          *ctrl_key_states |= record_arr[i].Event.KeyEvent.dwControlKeyState;
           break;
         case MOUSE_EVENT:
           curr_mouse_button_state = record_arr[i].Event.MouseEvent.dwButtonState;
@@ -1034,8 +1202,10 @@ int editorReadEvents(HANDLE handle, char *pc, int n_records) {
 int editorReadKey() {
   int nread;
   char buf[6];
+  DWORD ctrl_key_states = 0;
 
-  while((nread = editorReadEvents(E.in_handle, buf, 6)) == 0); // read until non-timeout event
+  // TODO: Figure out how to distinguish shift + Ctrl commands
+  while((nread = editorReadEvents(E.in_handle, buf, 6, &ctrl_key_states)) == 0); // read until non-timeout event
 
   char c = buf[0];
 
@@ -1097,6 +1267,9 @@ int editorReadKey() {
     // Default to returning ESC key
     return ESC;
   }
+  // Factor in control key states for certain keys
+  if (c == CTRL_KEY('z') && ctrl_key_states & SHIFT_PRESSED)
+    return SHIFT_CTRL_Z;
   return c;
 }
 
@@ -1157,11 +1330,20 @@ void editorProcessEvent() {
     case CTRL_KEY('c'):
       copySelectionToClipboard();
       if (c == CTRL_KEY('x'))
-        deleteSelection();
+        deleteSelection(1);
       break;
 
     case CTRL_KEY('v'):
       editorPasteFromClipboard();
+      break;
+
+    case CTRL_KEY('z'):
+      editorUndo();
+      break;
+
+    case SHIFT_CTRL_Z:
+    case CTRL_KEY('y'):
+      editorRedo();
       break;
 
     case BACKSPACE:
@@ -1172,7 +1354,7 @@ void editorProcessEvent() {
         if (c == DEL_KEY) editorMoveCursor(ARROW_RIGHT, 0);
         editorDelChar();
       } else {
-        deleteSelection();
+        deleteSelection(1);
       }
       break;
 
@@ -1224,17 +1406,10 @@ void editorPasteFromClipboard() {
   HANDLE handle = GetClipboardData(CF_TEXT);
   if (handle != NULL) {
     char *paste_text = GlobalLock(handle);
+    int pastelen = strlen(paste_text);
 
-    // Treat inputs as standard character inputs, like when typing
-    // Note that this will allow for control code insertions as actual chars
-    //   except for new lines and carriage returns
-    for (int i = 0; paste_text[i] != 0; i++) {
-      if (paste_text[i] == '\r');
-      else if (paste_text[i] == '\n')
-        editorInsertNewline(0);
-      else
-        editorInsertChar(paste_text[i]);
-    }
+    editorInsertText(paste_text, pastelen, 1);
+
     GlobalUnlock(handle);
   }
 
@@ -1447,6 +1622,11 @@ void initEditor() {
   E.og_terminal_size.Y = 0;
 
   E.selection = NULL;
+
+  E.undoBuf = malloc(UNDOBUF_MAX_SIZE * sizeof(struct undoEvent));
+  E.undoBufSize = 0;
+  E.redoBuf = malloc(UNDOBUF_MAX_SIZE * sizeof(struct undoEvent));
+  E.redoBufSize = 0;
 }
 
 int main(int argc, char *argv[]) {

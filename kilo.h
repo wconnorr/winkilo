@@ -24,6 +24,8 @@
 #define HL_HIGHLIGHT_NUMBERS (1<<0)
 #define HL_HIGHLIGHT_STRINGS (1<<1)
 
+#define UNDOBUF_MAX_SIZE 1
+
 // Highlight colors
 enum colorCodes {
   BLACK=30,
@@ -45,8 +47,6 @@ enum colorCodes {
   HI_WHITE
 };
 
-
-
 enum editorKey {
   BACKSPACE = 127, // backspace doesn't have backslash code for string literals :(
   // Multi-key escape sequences are assigned values > 256 (size of char datatype)
@@ -67,8 +67,14 @@ enum editorKey {
   CTRL_ARROW_RIGHT,
   CTRL_ARROW_UP,
   CTRL_ARROW_DOWN,
+  SHIFT_CTRL_Z,
 };
 
+enum events {
+  EVENT_NULL,
+  EVENT_INSERT,
+  EVENT_DELETE,
+};
 /*** DATA ***/
 
 struct editorSyntax {
@@ -116,12 +122,19 @@ struct editorConfig {
 
   // selections: for simplicity, we only allow one contiguous space of selected text
   struct textSelection *selection;
+
+  // Undo/redo buffers (stacks)
+  // FOR NOW: Just one object on each
+  struct undoEvent *undoBuf;
+  int undoBufSize;
+  struct undoEvent *redoBuf;
+  int redoBufSize;
 };
 
+// Coordinates of a contiguous block of text highlighted by user
 struct textSelection {
   // indices matching E.cx/cy (rather than rx)
-  // taily >= heady; if taily == heady: headx <= tailx
-  // if head == tail, this is equivalent to their being no selection (just the cursor)
+  // head is starting (fixed point) - head & tail are inclusive
   int headx, heady, tailx, taily;
 };
 
@@ -130,6 +143,27 @@ struct abuf {
   char *b;
   int len;
 };
+
+// Records events (that affect text) for undo/redo
+// Events include insertions and deletions of 1 char or selections
+// Undo/redo should move cursor back in place to cx, cy or end of text
+struct undoEvent {
+  int eventType; // Insert (1 char or paste multiple) / Delete (same)
+  int cy, cx;   //  Coordinates of event
+  char* text;  //   Text that was inserted or deleted
+  int textlen;
+};
+
+// // Stack containing prior actions to undo
+// // FOR NOW:  undoBufer has one space!
+// struct undoBufer {
+
+// };
+
+// // Stack containing undoEvent objects
+// struct redoBufer {
+
+// };
 
 /*** CUSTOMIZATION ***/
 
@@ -163,6 +197,8 @@ char *ASM6502_HL_extensions[] = {".asm", NULL};
 
 // TODO: color numbers by type (bin, dec, 0x, literal/addr)
 // TODO: assembler instructions (. commands)
+// TODO: labels
+// TODO: no case-sensitivity
 char *ASM6502_HL_keywords[] = {
   "ADC", "AND", "ASL", "BIT", "CLC", "CLD", "CLI", "CLV", "CMP", "CPX", "CPY",
   "DEC", "DEX", "DEY", "EOR", "INC", "INX", "INY", "LDA", "LDX", "LDY", "LSR",
@@ -219,15 +255,16 @@ int editorRowRxToCx(erow *row, int rx);
 void editorUpdateRow(erow *row);
 void editorInsertRow(int at, char *s, size_t len);
 void editorFreeRow(erow *row);
-void editorRowInsertChar(erow *row, int at, int c);
+void editorRowInsertChar(erow *row, int at, char c);
 void editorRowAppendString(erow *row, char *s, size_t len);
 void editorRowDelChar(erow *row, int at);
 
 /*** EDITOR OPERATIONS ***/
 int editorMatchSpaces(erow *row_src, erow *row_dst);
-void editorInsertChar(int c);
+void editorInsertChar(char c);
 void editorInsertNewline(int match_spaces);
 void editorDelChar();
+void editorInsertText(char* text, int textlen, int record_undo_event);
 
 /*** FILE IO ***/
 char *editorRowsToString(int *buflen);
@@ -244,8 +281,13 @@ void editorJump();
 struct textSelection canonicalSelection(struct textSelection *sel);
 int isInSelection(int row, int col);
 char *selectionToString(int *buflen);
-void deleteSelection();
+void deleteSelection(int record_undo_event);
 void copySelectionToClipboard();
+
+/*** UNDO/REDO ***/
+void addUndoEvent(int eventType, int cy, int cx, char* text, int textlen);
+void editorUndo();
+void editorRedo();
 
 /*** APPEND BUFFER ***/
 void abAppend(struct abuf *ab, const char *s, int len);
@@ -254,7 +296,7 @@ void abFree(struct abuf *ab);
 /*** INPUT ***/
 char *editorPrompt(char *prompt, int numeric, void (*callback)(char *, int));
 void editorMoveCursor(int key, int shift_pressed);
-int editorReadEvents(HANDLE handle, char *pc, int n_records);
+int editorReadEvents(HANDLE handle, char *pc, int n_records, DWORD* ctrl_key_states);
 int editorReadKey();
 void editorProcessKeypress();
 void editorPasteFromClipboard();
