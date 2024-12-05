@@ -7,7 +7,7 @@
   TODO:
     - Make sure all rows are null-terminated!!!!
     - options (CTRL-O) - tabs-to-spaces, tab stop interval
-    - undo
+    - redo
     - expand undo/redo buffer
     - scroll -> maybe set scroll area w/ codes and write whole file to screen buffer?
     - save-as (CRTL-SHIFT-S)
@@ -456,11 +456,6 @@ void editorInsertChar(char c, int record_undo_event) {
 }
 
 void editorInsertNewline(int match_spaces, int record_undo_event) {
-  if (record_undo_event) {
-    // TODO: Handle match spaces undo!
-    addUndoEvent(EVENT_INSERT_CHAR, E.cy, E.cx, "\n", 1);
-  }
-
   if (E.cx == 0)
     editorInsertRow(E.cy, "", 0); // just insert new line
   else {
@@ -480,6 +475,12 @@ void editorInsertNewline(int match_spaces, int record_undo_event) {
     E.cx = 0;
   }
   E.cy++;
+
+  if (record_undo_event) {
+    // Coordinates are on new line after spaces
+    addUndoEvent(EVENT_INSERT_NEWLINE, E.cy, E.cx, E.row[E.cy].chars, E.cx);
+  }
+
 }
 
 // Deletes character left of cursor (backspace)
@@ -946,17 +947,18 @@ void editorUndo() {
     // Pop off undo buffer
     struct undoEvent event = E.undoBuf[--E.undoBufSize];
     switch(event.eventType) {
-      case EVENT_INSERT_CHAR:
+      case EVENT_INSERT_NEWLINE:
         E.cx = event.cx;
         E.cy = event.cy;
-        if (event.text[0] == '\n') {
-          // TODO: Handle with selection if spaces are added!!!
-          E.cx = -1;
-          E.cy++;
+        while (E.cx > 0) {
           editorDelChar(0);
-          break;
         }
-        E.cx++;
+        editorDelChar(0);
+        break;
+        
+      case EVENT_INSERT_CHAR:
+        E.cx = event.cx+1;
+        E.cy = event.cy;
         editorDelChar(0);
         break;
       case EVENT_DELETE_CHAR:
@@ -969,7 +971,6 @@ void editorUndo() {
           break;
         }
         editorInsertChar(event.text[0], 0);
-        // TODO: HANDLE \n
         break;
       case EVENT_INSERT_STRING:
         // Delete inserted text
