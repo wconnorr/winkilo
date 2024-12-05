@@ -18,6 +18,8 @@
 /* 
 BUGS:
   - enter at EOF line crashes
+  - insert '\n' does not create undo object
+  - delete '\n' crashes
 */
 
 /*** INCLUDES ***/
@@ -443,16 +445,22 @@ int editorMatchSpaces(erow *row_src, erow *row_dst) {
 }
 
 // Inserts character at cursors. If on line past EOF, it creates a new row.
-void editorInsertChar(char c) {
+void editorInsertChar(char c, int record_undo_event) {
   if (E.cy == E.numrows) {
     editorInsertRow(E.numrows, "", 0); // append row at end
   }
   editorRowInsertChar(&E.row[E.cy], E.cx, c);
-  addUndoEvent(EVENT_INSERT, E.cy, E.cx, &c, 1);
+  if (record_undo_event)
+    addUndoEvent(EVENT_INSERT_CHAR, E.cy, E.cx, &c, 1);
   E.cx++;
 }
 
-void editorInsertNewline(int match_spaces) {
+void editorInsertNewline(int match_spaces, int record_undo_event) {
+  if (record_undo_event) {
+    // TODO: Handle match spaces undo!
+    addUndoEvent(EVENT_INSERT_CHAR, E.cy, E.cx, "\n", 1);
+  }
+
   if (E.cx == 0)
     editorInsertRow(E.cy, "", 0); // just insert new line
   else {
@@ -475,14 +483,16 @@ void editorInsertNewline(int match_spaces) {
 }
 
 // Deletes character left of cursor (backspace)
-void editorDelChar() {
+void editorDelChar(int record_undo_event) {
   if (E.cy == E.numrows) return;
   if (E.cx == 0 && E.cy == 0) return;
 
-  if (E.cx > 0)
-    addUndoEvent(EVENT_DELETE, E.cy, E.cx-1, &E.row[E.cy].chars[E.cx-1], 1);
-  else
-    addUndoEvent(EVENT_DELETE, E.cy, -1, "\n", 1);
+  if (record_undo_event) {
+    if (E.cx > 0)
+      addUndoEvent(EVENT_DELETE_CHAR, E.cy, E.cx-1, &E.row[E.cy].chars[E.cx-1], 1);
+    else
+      addUndoEvent(EVENT_DELETE_CHAR, E.cy-1, E.row[E.cy-1].size, "\n", 1);
+  }
 
   erow *row = &E.row[E.cy];
   if (E.cx > 0)
@@ -498,7 +508,7 @@ void editorDelChar() {
 // Insert given lines of text at the cursor position
 void editorInsertText(char* text, int textlen, int record_undo_event) {
   if (record_undo_event)
-    addUndoEvent(EVENT_INSERT, E.cy, E.cx, text, textlen);
+    addUndoEvent(EVENT_INSERT_STRING, E.cy, E.cx, text, textlen);
 
   if (E.cy == E.numrows) {
     editorInsertRow(E.cy, NULL, 0);
@@ -836,7 +846,7 @@ void deleteSelection(int record_undo_event) {
   if (record_undo_event) {
     int selectlen = 0;
     char *selecttext = selectionToString(&selectlen);
-    addUndoEvent(EVENT_DELETE, sel.heady, sel.headx, selecttext, selectlen-1);
+    addUndoEvent(EVENT_DELETE_STRING, sel.heady, sel.headx, selecttext, selectlen-1);
   }
 
   // Realloc old row char, reset size
@@ -936,7 +946,32 @@ void editorUndo() {
     // Pop off undo buffer
     struct undoEvent event = E.undoBuf[--E.undoBufSize];
     switch(event.eventType) {
-      case EVENT_INSERT:
+      case EVENT_INSERT_CHAR:
+        E.cx = event.cx;
+        E.cy = event.cy;
+        if (event.text[0] == '\n') {
+          // TODO: Handle with selection if spaces are added!!!
+          E.cx = -1;
+          E.cy++;
+          editorDelChar(0);
+          break;
+        }
+        E.cx++;
+        editorDelChar(0);
+        break;
+      case EVENT_DELETE_CHAR:
+        E.cx = event.cx;
+        E.cy = event.cy;
+        if (event.text[0] == '\n') {
+          // Does not need to handle whitespace (unless we remove whitespace when deleting newline)
+          editorInsertNewline(0, 0);
+          E.cx = 0;
+          break;
+        }
+        editorInsertChar(event.text[0], 0);
+        // TODO: HANDLE \n
+        break;
+      case EVENT_INSERT_STRING:
         // Delete inserted text
         // Create selection & delete selection
         if (!E.selection) {
@@ -974,12 +1009,12 @@ void editorUndo() {
         E.cx = event.cx;
         E.cy = event.cy;
         break;
-      case EVENT_DELETE:
+      case EVENT_DELETE_STRING:
         if (E.cx == -1) {
           // Reinsert new line
           E.cy = event.cy;
           E.cx = 0;
-          editorInsertNewline(0);
+          editorInsertNewline(0, 0);
         }
         E.cx = event.cx;
         E.cy = event.cy;
@@ -1281,7 +1316,11 @@ void editorProcessEvent() {
 
   switch(c) {
     case '\r': // ENTER key
-      editorInsertNewline(1);
+      if (E.cy == E.numrows) {
+        editorInsertRow(E.cy++, "", 0);
+        break;
+      }
+      editorInsertNewline(1, 1);
       break;
 
     case CTRL_KEY('q'):
@@ -1352,7 +1391,7 @@ void editorProcessEvent() {
       if (E.selection == NULL) {
         // If delete: delete next char; else delete previous char
         if (c == DEL_KEY) editorMoveCursor(ARROW_RIGHT, 0);
-        editorDelChar();
+        editorDelChar(1);
       } else {
         deleteSelection(1);
       }
@@ -1393,7 +1432,7 @@ void editorProcessEvent() {
       break;
 
     default:
-      editorInsertChar(c);
+      editorInsertChar(c, 1);
       break;
   }
 

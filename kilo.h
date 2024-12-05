@@ -71,9 +71,10 @@ enum editorKey {
 };
 
 enum events {
-  EVENT_NULL,
-  EVENT_INSERT,
-  EVENT_DELETE,
+  EVENT_INSERT_CHAR,
+  EVENT_DELETE_CHAR,
+  EVENT_INSERT_STRING,
+  EVENT_DELETE_STRING
 };
 /*** DATA ***/
 
@@ -261,8 +262,8 @@ void editorRowDelChar(erow *row, int at);
 
 /*** EDITOR OPERATIONS ***/
 int editorMatchSpaces(erow *row_src, erow *row_dst);
-void editorInsertChar(char c);
-void editorInsertNewline(int match_spaces);
+void editorInsertChar(char c, int record_undo_event);
+void editorInsertNewline(int match_spaces, int record_undo_event);
 void editorDelChar();
 void editorInsertText(char* text, int textlen, int record_undo_event);
 
